@@ -19,7 +19,14 @@ export interface QueryResult { columns: string[]; rows: Value[][]; affected: big
 export interface BatchResult { requestId: string; sequence: number; results: QueryResult[]; readVersion?: 2; executionWork?: unknown; }
 export interface Capabilities { provenance: 'negotiated' | 'documented'; [key: string]: unknown; }
 export interface DatabaseInfo { id: string; sequence: number; capabilities: Capabilities; [key: string]: unknown; }
-export interface ConnectOptions { url: string; token: string; timeoutMs?: number; fetch?: typeof globalThis.fetch; /** Cloud database URLs only: skip the details request at connect; the first write without afterSequence fetches it. */ deferInfo?: boolean; }
+export interface ConnectOptions {
+  url: string; token: string; timeoutMs?: number; fetch?: typeof globalThis.fetch;
+  /** Cloud database URLs skip the details request at connect by default; the first write without afterSequence fetches it. Pass false to request it at connect. */
+  deferInfo?: boolean;
+  /** Cloud database URLs send a background warm request at connect by default. Pass false to skip it. */
+  warm?: boolean;
+}
+export interface WarmResult { state: 'ready' | 'starting' | 'skipped'; }
 export type Outcome = 'not-sent' | 'read-failed' | 'unknown' | 'rolled-back';
 export class ClientError extends Error {
   readonly code: string;
@@ -43,8 +50,10 @@ export interface Client {
 export class RemoteDatabase implements Client {
   private constructor();
   readonly url: string;
-  /** True when connect() skipped the details request (deferInfo on a Cloud URL). */
+  /** True when connect() skipped the details request (the default for Cloud URLs). */
   readonly deferred: boolean;
+  /** Ask Cloud to start the database's container and open the database without running a query. */
+  warm(options?: RequestOptions): Promise<WarmResult>;
   readonly sequence: number;
   readonly databaseId: string;
   info(options?: RequestOptions): Promise<DatabaseInfo>;

@@ -47,7 +47,7 @@ const json = (body, status = 200) => Response.json(body, { status });
 
 test('query version 2 confirms writes; unknown versions preserve the exact recovery request', async () => {
   let version = '2';
-  const db = await connect({ url: cloud, token: 'test-token', fetch: async (_url, options) => {
+  const db = await connect({ url: cloud, token: 'test-token', deferInfo: false, warm: false, fetch: async (_url, options) => {
     if (options.method === 'GET') return json({ id: 'cloud-test', sequence: 0 });
     const q = JSON.parse(options.body);
     return Response.json({ requestId: q.requestId, sequence: q.readVersion ? 1 : q.afterSequence + 1,
@@ -171,6 +171,7 @@ test('Cloud adapter uses the same read/write calls and marks capabilities as doc
   const sent = [];
   const db = await connect({ url: cloud + '/query', token: 'jwt-fixture', fetch: async (url, options) => {
     sent.push(url);
+    if (url.endsWith('/warm')) return json({ state: 'starting' });
     if (options.method === 'GET') return json({ id: '22222222-2222-4222-8222-222222222222', sequence: 0 });
     const request = JSON.parse(options.body);
     return json({ requestId: request.requestId, sequence: request.readVersion === 2 ? 0 : 1, ...(request.readVersion ? { readVersion: 2 } : {}), results: [result()] });
@@ -287,7 +288,7 @@ test('a journal saved for the largest escaped request body can be loaded', async
   await fs.mkdir(root, { recursive: true });
   const dir = await fs.mkdtemp(path.join(root, 'studio-client-'));
   t.after(() => fs.rm(dir, { recursive: true, force: true }));
-  const db = await connect({ url: cloud, token: 'test-token', fetch: async () => json({ id: 'cloud-test', sequence: 0 }) });
+  const db = await connect({ url: cloud, token: 'test-token', deferInfo: false, warm: false, fetch: async () => json({ id: 'cloud-test', sequence: 0 }) });
   const prepared = db.prepareWrite([{ sql: 'SELECT $x', params: { $x: '\\'.repeat(32_690) } }]);
   const file = path.join(dir, 'request.json');
   await saveRequest(file, prepared);
@@ -421,7 +422,7 @@ test('fastdb:// is an alias for https:// with the same URL checks', () => {
     alias + '?authToken=secret', alias + '#token', 'fastdb://cloud.fastdb.org/', 'fastdb:cloud.fastdb.org', 'FASTDB://cloud.fastdb.org/v1/database']) assert.throws(() => normalizeUrl(url), url);
 });
 
-test('deferInfo skips the details request on Cloud URLs until a write needs a sequence', async () => {
+test('Cloud URLs skip the details request until a write needs a sequence', async () => {
   const calls = [];
   const fetch = async (url, options) => {
     calls.push(`${options.method} ${new URL(url).pathname.split('/').at(-1)}`);
@@ -430,19 +431,67 @@ test('deferInfo skips the details request on Cloud URLs until a write needs a se
     if (body.readVersion === 2) return json({ requestId: body.requestId, readVersion: 2, sequence: 40, results: [result()] }, 200, { 'x-fastdb-query-version': '2' });
     return json({ requestId: body.requestId, sequence: body.afterSequence + 1, results: [result()] }, 200, { 'x-fastdb-query-version': '2' });
   };
-  const db = await connect({ url: cloud.replace('https://', 'fastdb://'), token: 'test-token', deferInfo: true, fetch });
+  const db = await connect({ url: cloud.replace('https://', 'fastdb://'), token: 'test-token', warm: false, fetch });
   assert.equal(db.deferred, true); assert.deepEqual(calls, [], 'no request at connect');
   assert.equal(db.databaseId, '22222222-2222-4222-8222-222222222222');
   assert.throws(() => db.prepareWrite([{ sql: 'UPDATE t SET n=1' }]), error => error.code === 'FDB_SEQUENCE_UNKNOWN' && error.outcome === 'not-sent');
   const write = await db.writeAtomic([{ sql: 'UPDATE t SET n=1' }]);
   assert.equal(write.sequence, 41); assert.deepEqual(calls, ['GET 22222222-2222-4222-8222-222222222222', 'POST query'], 'the first write fetches details once');
   calls.length = 0;
-  const reader = await connect({ url: cloud, token: 'test-token', deferInfo: true, fetch });
+  const reader = await connect({ url: cloud, token: 'test-token', deferInfo: true, warm: false, fetch });
   await reader.read([{ sql: 'SELECT 1' }]);
   assert.ok(reader.prepareWrite([{ sql: 'UPDATE t SET n=2' }]), 'a read supplies the sequence');
   assert.deepEqual(calls, ['POST read']);
   await assert.rejects(connect({ url: 'http://127.0.0.1:4321', token: 'test-token', deferInfo: true, fetch }), /Cloud database URLs/);
   await assert.rejects(connect({ url: cloud, token: 'test-token', deferInfo: 'yes', fetch }), /boolean/);
-  const mismatch = await connect({ url: cloud, token: 'test-token', deferInfo: true, fetch: async () => json({ id: '33333333-3333-4333-8333-333333333333', sequence: 1 }) });
+  const mismatch = await connect({ url: cloud, token: 'test-token', warm: false, fetch: async () => json({ id: '33333333-3333-4333-8333-333333333333', sequence: 1 }) });
   await assert.rejects(mismatch.info(), error => error.code === 'FDB_PROTOCOL', 'a different database id is still rejected');
+  calls.length = 0;
+  const eager = await connect({ url: cloud, token: 'test-token', deferInfo: false, warm: false, fetch });
+  assert.equal(eager.deferred, false); assert.equal(eager.sequence, 40);
+  assert.deepEqual(calls, ['GET 22222222-2222-4222-8222-222222222222'], 'deferInfo: false keeps the details request at connect');
+});
+
+test('Cloud connections warm the database in the background; warm() reports the state', async () => {
+  const calls = [];
+  let state = 'starting';
+  const fetch = async (url, options) => {
+    calls.push(`${options.method} ${new URL(url).pathname.split('/').at(-1)}`);
+    if (url.endsWith('/warm')) {
+      assert.equal(options.body, '{}'); assert.equal(options.headers.authorization, 'Bearer test-token');
+      assert.equal(options.headers['x-fastdb-database-id'], '22222222-2222-4222-8222-222222222222');
+      return state === 'missing' ? json({ error: 'Not found' }, 404) : json({ state });
+    }
+    return json({ id: '22222222-2222-4222-8222-222222222222', sequence: 3 });
+  };
+  const db = await connect({ url: cloud, token: 'test-token', fetch });
+  assert.equal(db.deferred, true);
+  assert.deepEqual(calls, ['POST warm'], 'connect sends only the warm request and does not wait for it');
+  state = 'ready';
+  assert.deepEqual(await db.warm(), { state: 'ready' });
+  state = 'skipped';
+  assert.deepEqual(await db.warm(), { state: 'skipped' });
+  state = 'unknown';
+  await assert.rejects(db.warm(), error => error.code === 'FDB_PROTOCOL' && error.outcome === 'read-failed');
+  state = 'missing';
+  await assert.rejects(db.warm(), error => error.status === 404 && error.outcome === 'read-failed');
+  calls.length = 0;
+  const failing = await connect({ url: cloud, token: 'test-token', fetch: async () => { throw new Error('network down'); } });
+  assert.equal(failing.databaseId, '22222222-2222-4222-8222-222222222222', 'a failed background warm does not fail connect');
+  const eager = await connect({ url: cloud, token: 'test-token', deferInfo: false, fetch });
+  assert.deepEqual(calls.sort(), ['GET 22222222-2222-4222-8222-222222222222', 'POST warm']);
+  calls.length = 0;
+  await connect({ url: cloud, token: 'test-token', warm: false, fetch });
+  assert.deepEqual(calls, [], 'warm: false sends nothing at connect');
+  let aborted;
+  const pending = await connect({ url: cloud, token: 'test-token', fetch: (_url, options) => new Promise((_, reject) => {
+    options.signal.addEventListener('abort', () => { aborted = true; reject(options.signal.reason); });
+  }) });
+  await pending.close();
+  assert.equal(aborted, true, 'close cancels the background warm');
+  const local = await connect({ url: 'http://127.0.0.1:4321', token: 'test-token', fetch: async () => json(details(0)) });
+  await assert.rejects(local.warm(), error => error.code === 'FDB_UNSUPPORTED' && error.outcome === 'not-sent');
+  await assert.rejects(connect({ url: 'http://127.0.0.1:4321', token: 'test-token', warm: true, fetch }), /Cloud database URLs/);
+  await assert.rejects(connect({ url: cloud, token: 'test-token', warm: 'yes', fetch }), /boolean/);
+  await Promise.all([db.close(), failing.close(), eager.close(), local.close()]);
 });

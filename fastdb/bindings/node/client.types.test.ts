@@ -37,6 +37,9 @@ void errors;
 async function deferredConnection(): Promise<void> {
   const deferred = await connect({ url: 'fastdb://cloud.fastdb.org/v1/organizations/11111111-1111-4111-8111-111111111111/databases/22222222-2222-4222-8222-222222222222', token: 'token', deferInfo: true });
   const flag: boolean = deferred.deferred;
+  const warmed: 'ready' | 'starting' | 'skipped' = (await deferred.warm({ timeoutMs: 1000 })).state;
+  void warmed;
+  await connect({ url: 'https://cloud.fastdb.org/v1/organizations/11111111-1111-4111-8111-111111111111/databases/22222222-2222-4222-8222-222222222222', token: 'token', deferInfo: false, warm: false });
   void flag;
 }
 void deferredConnection;

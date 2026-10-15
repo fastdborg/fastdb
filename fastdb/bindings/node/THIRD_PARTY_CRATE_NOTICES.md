@@ -4,7 +4,7 @@ Generated from the pinned Cargo dependency inventory and checksummed source arch
 
 This is a partial notice collection. It supplements LICENSE.md and THIRD_PARTY_NOTICES.md. Inline attributions, unconventional filenames and other bundled components require further review before a complete distribution-notice claim.
 
-Target: `x86_64-unknown-linux-gnu`. Cargo.lock SHA-256: `a69815193955c4fd64388249950109c804837848655b71b6a5bc555bb7a0eed5`.
+Target: `x86_64-unknown-linux-gnu`. Cargo.lock SHA-256: `2bc51360abdc655b925384e2e44de9a09eaf2488fb0b1488c64d7b5b96bdc305`.
 
 ## Packages without collected archive or supplemental texts
 
@@ -264,16 +264,16 @@ Target: `x86_64-unknown-linux-gnu`. Cargo.lock SHA-256: `a69815193955c4fd6438824
 - `LICENSE-APACHE`: [source text 7cde763ba32b3ec2a84eddd8beb0dcb895fd6436aeb18491ab9572a7eb8de996](#text-7cde763ba32b3ec2a84eddd8beb0dcb895fd6436aeb18491ab9572a7eb8de996)
 - `LICENSE-MIT`: [source text 7c86aec715e38bf01c316a69de917c1245bf9945a5dc0329eecc774cdb4f26c2](#text-7c86aec715e38bf01c316a69de917c1245bf9945a5dc0329eecc774cdb4f26c2)
 
-### fastdb-node 2.5.4
+### fastdb-node 2.6.0
 - Workspace `LICENSE.md`: [source text b646f9ee8bcaf87e8de75153b9df7a2861c7ac445c87e741768b3c2bccf47bc5](#text-b646f9ee8bcaf87e8de75153b9df7a2861c7ac445c87e741768b3c2bccf47bc5)
 
-### fastdb 2.5.4
+### fastdb 2.6.0
 - Workspace `LICENSE.md`: [source text b646f9ee8bcaf87e8de75153b9df7a2861c7ac445c87e741768b3c2bccf47bc5](#text-b646f9ee8bcaf87e8de75153b9df7a2861c7ac445c87e741768b3c2bccf47bc5)
 
 ### fastdivide 0.4.2
 - `LICENSE.txt`: [source text 97b68427822e3bca727ea8bc8748b354509b36bc2311c34b39ce86773fcb65c9](#text-97b68427822e3bca727ea8bc8748b354509b36bc2311c34b39ce86773fcb65c9)
 
-### fastql-parser 2.5.4
+### fastql-parser 2.6.0
 - Workspace `LICENSE.md`: [source text b646f9ee8bcaf87e8de75153b9df7a2861c7ac445c87e741768b3c2bccf47bc5](#text-b646f9ee8bcaf87e8de75153b9df7a2861c7ac445c87e741768b3c2bccf47bc5)
 
 ### fastrand 2.3.0

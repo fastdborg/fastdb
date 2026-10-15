@@ -1,12 +1,14 @@
 # FastDB embedded database
 
-FastDB and FastQL [2.5.4 are released for Linux x64](docs/release-2.5.4.md),
+FastDB and FastQL [2.6.0 are released for Linux x64](docs/release-2.6.0.md),
 with native Rust, Node.js/TypeScript, Python, PHP, Swift, C# and Go clients.
-See the [completed checklist](docs/v2.5.4-tasks.md),
-[verified download](docs/release-2.5.4-download.json),
+See the [completed checklist](docs/v2.6.0-tasks.md),
+[verified download](docs/release-2.6.0-download.json),
 [language contracts](docs/v2.2-language.md) and [engine provenance](UPSTREAM.md).
 
-2.5.4 adds `fastdb://` connection URLs and removes client round trips. 2.5.3 made
+2.6.0 makes Cloud connections start faster: `connect()` skips the details
+request and warms the database in the background. 2.5.4 added `fastdb://`
+connection URLs. 2.5.3 made
 collection scans and grouping cheaper per document. 2.5.2 made
 spatial `EXPLAIN` read no data. 2.5.1 made field reads and filtered
 nearest search faster and metered nearest planning work. 2.5.0 added a bounded spatial model: Polygon and MultiPolygon values, exact
@@ -92,13 +94,13 @@ retain their contracts; line and interactive modes continue after a failed comma
 and exit nonzero if any command failed.
 
 V2 development also includes [dense ANN search](docs/v2-ann.md), qualified under
-its documented native contract. Release `2.5.4` uses optimized
-`fastdb-production`; the [release checklist](docs/v2.5.4-tasks.md) is complete.
-See the [verified public download](docs/release-2.5.4-download.json).
+its documented native contract. Release `2.6.0` uses optimized
+`fastdb-production`; the [release checklist](docs/v2.6.0-tasks.md) is complete.
+See the [verified public download](docs/release-2.6.0-download.json).
 
 The [Python binding](bindings/python/README.md) embeds the same frontend at
-version `2.5.4`. V2 release clients are Rust, Node.js/TypeScript, Python, PHP, Swift, C# and Go; browser/WASM is
+version `2.6.0`. V2 release clients are Rust, Node.js/TypeScript, Python, PHP, Swift, C# and Go; browser/WASM is
 removed from active development and excluded from this release. Current Linux
-installed-wheel checks are recorded in the [2.5.4 evidence](docs/release-2.5.4.md).
+installed-wheel checks are recorded in the [2.6.0 evidence](docs/release-2.6.0.md).
 
 [PHP, Swift, C# and Go native clients](docs/native-language-clients.md) share a FastDB C ABI. Local builds and the common contract test are documented there.
