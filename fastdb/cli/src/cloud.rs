@@ -23,7 +23,11 @@ struct Failure {
 }
 impl Cloud {
     fn new(endpoint: &str, key: String) -> Result<Self> {
-        let origin = Url::parse(endpoint).map_err(|_| "Invalid FASTDB_CLOUD_URL")?;
+        let endpoint = endpoint
+            .strip_prefix("fastdb://")
+            .map(|rest| format!("https://{rest}"))
+            .unwrap_or_else(|| endpoint.to_owned());
+        let origin = Url::parse(&endpoint).map_err(|_| "Invalid FASTDB_CLOUD_URL")?;
         let local = origin.host_str() == Some("localhost")
             || origin.host_str().is_some_and(|host| {
                 host.trim_matches(['[', ']'])
@@ -38,7 +42,7 @@ impl Cloud {
             || origin.path() != "/"
         {
             return Err(
-                "FASTDB_CLOUD_URL must be an HTTPS origin (HTTP is allowed only on loopback)"
+                "FASTDB_CLOUD_URL must be an HTTPS or fastdb:// origin (HTTP is allowed only on loopback)"
                     .into(),
             );
         }
@@ -189,6 +193,7 @@ impl Cloud {
         let mut pending: Option<Value> = None;
         let mut pending_uncertain = false;
         let mut failed = false;
+        let mut confirmed_sequence: Option<(u64, std::time::Instant)> = None;
         loop {
             let bytes = match reader.read(
                 if buffer.is_empty() {
@@ -254,7 +259,10 @@ impl Cloud {
                 if statements.len() > 32 {
                     return Err("Cloud batches allow at most 32 statements".into());
                 }
-                let sequence = requests::sequence(self, id)?;
+                let sequence = match confirmed_sequence.take() {
+                    Some((value, at)) if at.elapsed() < Duration::from_secs(2) => value,
+                    _ => requests::sequence(self, id)?,
+                };
                 pending_uncertain = false;
                 pending = Some(
                     json!({ "requestId": uuid::Uuid::new_v4().to_string(), "afterSequence": sequence,
@@ -282,9 +290,12 @@ impl Cloud {
             match response {
                 Ok(result) => {
                     self.output(&result)?;
+                    confirmed_sequence = requests::sole_commit_sequence(request, &result)
+                        .map(|value| (value, std::time::Instant::now()));
                     pending = None;
                 }
                 Err(error) => {
+                    confirmed_sequence = None;
                     self.output(&json!({ "error": error.message, "uncertain": pending_uncertain || error.uncertain, "requestId": request["requestId"], "afterSequence": request["afterSequence"] }))?;
                     pending_uncertain |= error.uncertain;
                     if !pending_uncertain {
@@ -383,4 +394,24 @@ pub fn run(mut args: Vec<String>) -> Result<std::process::ExitCode> {
         .map_err(|error| error.message)?;
     cloud.output(&result)?;
     Ok(std::process::ExitCode::SUCCESS)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Cloud;
+
+    #[test]
+    fn fastdb_scheme_is_an_https_alias_with_the_same_origin_rules() {
+        let key = format!("fdbo_{}", "a".repeat(64));
+        let cloud = Cloud::new("fastdb://cloud.fastdb.org", key.clone()).unwrap();
+        assert_eq!(cloud.origin.as_str(), "https://cloud.fastdb.org/");
+        for endpoint in [
+            "fastdb://user:pass@cloud.fastdb.org",
+            "fastdb://cloud.fastdb.org/?key=x",
+            "fastdb://cloud.fastdb.org/path",
+            "fastdb:cloud.fastdb.org",
+        ] {
+            assert!(Cloud::new(endpoint, key.clone()).is_err(), "{endpoint}");
+        }
+    }
 }

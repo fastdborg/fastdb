@@ -33,3 +33,10 @@ function errors(error: unknown) {
   }
 }
 void errors;
+
+async function deferredConnection(): Promise<void> {
+  const deferred = await connect({ url: 'fastdb://cloud.fastdb.org/v1/organizations/11111111-1111-4111-8111-111111111111/databases/22222222-2222-4222-8222-222222222222', token: 'token', deferInfo: true });
+  const flag: boolean = deferred.deferred;
+  void flag;
+}
+void deferredConnection;

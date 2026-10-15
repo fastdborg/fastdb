@@ -101,9 +101,15 @@ try:
     ]:
         run(args)
         assert requests[-1][:2] == (method, path)
+    details_gets = lambda: sum(1 for request in requests if request[:2] == ('GET', f'{base}/{database}'))
+    before = details_gets()
+    run(['db', 'access', database], "SELECT 1;\n.quit\n")
+    one_statement_gets = details_gets() - before
+    query_attempts.clear(); before = details_gets()
     run(['db', 'access', database], "SELECT 1;\nSELECT\n2;\n.quit\n")
     assert len(query_attempts) == 2
-    assert all(q['afterSequence'] == 7 for q in query_attempts)
+    assert [q['afterSequence'] for q in query_attempts] == [7, 8], 'a sole confirmed commit supplies the next sequence'
+    assert details_gets() - before == one_statement_gets, 'the second statement needs no details request'
     assert len({q['requestId'] for q in query_attempts}) == 2
     run(['db', 'access', database], 'SELECT 1; SELECT 2;\n.quit\n')
     assert len(query_attempts[-1]['statements']) == 2
@@ -155,6 +161,10 @@ try:
         run(['db','retry',str(directory/'huge.json')],success=False);assert len(requests)==before
     mode='intervening'
     run(['db','access',database], 'SELECT 1;\n.quit\n')
+    query_attempts.clear(); before = details_gets()
+    run(['db','access',database], 'SELECT 1;\nSELECT 2;\n.quit\n')
+    assert [q['afterSequence'] for q in query_attempts] == [sequence, sequence], 'another writer between statements forces a fresh sequence'
+    assert details_gets() - before == one_statement_gets + 1
     mode='normal'
     sequence=7
     query_attempts.clear()
@@ -175,7 +185,7 @@ try:
     assert len(requests) == before + 1
     mode = 'large'
     run(['whoami'], success=False)
-    for endpoint in ['http://example.test', 'https://user:pass@example.test', 'https://example.test/?key=bad']:
+    for endpoint in ['http://example.test', 'https://user:pass@example.test', 'https://example.test/?key=bad', 'fastdb://user:pass@example.test', 'fastdb://example.test/?key=bad', 'fastdb:example.test']:
         run(['whoami'], success=False, settings={**env, 'FASTDB_CLOUD_URL': endpoint})
     mode='normal'
     before=len(requests)

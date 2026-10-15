@@ -19,7 +19,7 @@ export interface QueryResult { columns: string[]; rows: Value[][]; affected: big
 export interface BatchResult { requestId: string; sequence: number; results: QueryResult[]; readVersion?: 2; executionWork?: unknown; }
 export interface Capabilities { provenance: 'negotiated' | 'documented'; [key: string]: unknown; }
 export interface DatabaseInfo { id: string; sequence: number; capabilities: Capabilities; [key: string]: unknown; }
-export interface ConnectOptions { url: string; token: string; timeoutMs?: number; fetch?: typeof globalThis.fetch; }
+export interface ConnectOptions { url: string; token: string; timeoutMs?: number; fetch?: typeof globalThis.fetch; /** Cloud database URLs only: skip the details request at connect; the first write without afterSequence fetches it. */ deferInfo?: boolean; }
 export type Outcome = 'not-sent' | 'read-failed' | 'unknown' | 'rolled-back';
 export class ClientError extends Error {
   readonly code: string;
@@ -43,6 +43,8 @@ export interface Client {
 export class RemoteDatabase implements Client {
   private constructor();
   readonly url: string;
+  /** True when connect() skipped the details request (deferInfo on a Cloud URL). */
+  readonly deferred: boolean;
   readonly sequence: number;
   readonly databaseId: string;
   info(options?: RequestOptions): Promise<DatabaseInfo>;

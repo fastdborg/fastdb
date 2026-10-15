@@ -411,3 +411,38 @@ test('historical Cloud Record receipt keys decode without changing new request e
     assert.throws(() => decodeValue({ type: 'Record', value: { table: 'posts', key } }));
   }
 });
+
+test('fastdb:// is an alias for https:// with the same URL checks', () => {
+  const alias = cloud.replace('https://', 'fastdb://');
+  assert.equal(normalizeUrl(alias), cloud);
+  assert.equal(normalizeUrl(alias + '/query'), cloud);
+  assert.equal(normalizeUrl('fastdb://127.0.0.1/v1/database'), 'https://127.0.0.1/v1/database');
+  for (const url of ['fastdb://user:secret@cloud.fastdb.org/v1/organizations/11111111-1111-4111-8111-111111111111/databases/22222222-2222-4222-8222-222222222222',
+    alias + '?authToken=secret', alias + '#token', 'fastdb://cloud.fastdb.org/', 'fastdb:cloud.fastdb.org', 'FASTDB://cloud.fastdb.org/v1/database']) assert.throws(() => normalizeUrl(url), url);
+});
+
+test('deferInfo skips the details request on Cloud URLs until a write needs a sequence', async () => {
+  const calls = [];
+  const fetch = async (url, options) => {
+    calls.push(`${options.method} ${new URL(url).pathname.split('/').at(-1)}`);
+    if (options.method === 'GET') return json({ id: '22222222-2222-4222-8222-222222222222', sequence: 40 });
+    const body = JSON.parse(options.body);
+    if (body.readVersion === 2) return json({ requestId: body.requestId, readVersion: 2, sequence: 40, results: [result()] }, 200, { 'x-fastdb-query-version': '2' });
+    return json({ requestId: body.requestId, sequence: body.afterSequence + 1, results: [result()] }, 200, { 'x-fastdb-query-version': '2' });
+  };
+  const db = await connect({ url: cloud.replace('https://', 'fastdb://'), token: 'test-token', deferInfo: true, fetch });
+  assert.equal(db.deferred, true); assert.deepEqual(calls, [], 'no request at connect');
+  assert.equal(db.databaseId, '22222222-2222-4222-8222-222222222222');
+  assert.throws(() => db.prepareWrite([{ sql: 'UPDATE t SET n=1' }]), error => error.code === 'FDB_SEQUENCE_UNKNOWN' && error.outcome === 'not-sent');
+  const write = await db.writeAtomic([{ sql: 'UPDATE t SET n=1' }]);
+  assert.equal(write.sequence, 41); assert.deepEqual(calls, ['GET 22222222-2222-4222-8222-222222222222', 'POST query'], 'the first write fetches details once');
+  calls.length = 0;
+  const reader = await connect({ url: cloud, token: 'test-token', deferInfo: true, fetch });
+  await reader.read([{ sql: 'SELECT 1' }]);
+  assert.ok(reader.prepareWrite([{ sql: 'UPDATE t SET n=2' }]), 'a read supplies the sequence');
+  assert.deepEqual(calls, ['POST read']);
+  await assert.rejects(connect({ url: 'http://127.0.0.1:4321', token: 'test-token', deferInfo: true, fetch }), /Cloud database URLs/);
+  await assert.rejects(connect({ url: cloud, token: 'test-token', deferInfo: 'yes', fetch }), /boolean/);
+  const mismatch = await connect({ url: cloud, token: 'test-token', deferInfo: true, fetch: async () => json({ id: '33333333-3333-4333-8333-333333333333', sequence: 1 }) });
+  await assert.rejects(mismatch.info(), error => error.code === 'FDB_PROTOCOL', 'a different database id is still rejected');
+});

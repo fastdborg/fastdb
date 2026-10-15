@@ -44,6 +44,11 @@ pub(super) fn confirmed(body: &Value, reply: &Value) -> bool {
         })
         && reply["results"].is_array()
 }
+pub(super) fn sole_commit_sequence(body: &Value, reply: &Value) -> Option<u64> {
+    let after = body["afterSequence"].as_u64()?;
+    let sequence = reply["sequence"].as_u64()?;
+    (sequence == after + 1 && sequence <= MAX_SEQUENCE).then_some(sequence)
+}
 pub(super) fn sequence(cloud: &Cloud, id: &str) -> Result<u64> {
     let info = cloud
         .request(Method::GET, &cloud.database_path(id)?, None)
