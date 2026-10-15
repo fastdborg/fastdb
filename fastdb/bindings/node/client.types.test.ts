@@ -9,6 +9,7 @@ async function clientTypes() {
   await saveRequest('/private/request.json', write);
   await db.submit(write, { signal: new AbortController().signal });
   await db.recover(await loadRequest('/private/request.json'));
+  const engineVersion: string | undefined = (await db.info()).engineVersion;
   await db.close();
   void count; void value;
   // @ts-expect-error ifSequence is a write condition

@@ -38,6 +38,8 @@ test('embedded client explicitly creates files and round-trips portable values w
   const db = await openEmbedded({ path: file, create: true });
   t.after(() => db.close());
   const info = await db.info();
+  assert.equal(info.engineVersion, require('./package.json').version);
+  assert.deepEqual((await db.read([{ sql: 'SELECT fastdb_version()' }])).results[0].rows, [[info.engineVersion]]);
   assert.equal(info.journalMode, 'wal');
   assert.equal(info.capabilities.sequenceScope, 'adapter');
   assert.equal(info.capabilities.replayDurability, 'adapter-lifetime');

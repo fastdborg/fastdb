@@ -135,6 +135,11 @@ pub(crate) fn register(connection: &Connection) -> Result<()> {
                 sort_encoded as turso_ext::ScalarFunction,
                 1,
             ),
+            (
+                c"fastdb_version",
+                fastdb_version as turso_ext::ScalarFunction,
+                0,
+            ),
         ]
         .into_iter()
         .try_for_each(|(name, callback, argc)| {
@@ -142,7 +147,9 @@ pub(crate) fn register(connection: &Connection) -> Result<()> {
                 api.ctx,
                 name.as_ptr(),
                 argc,
-                name != c"__fastdb_pagination_value" && name != c"__fastdb_unnest_json",
+                name != c"__fastdb_pagination_value"
+                    && name != c"__fastdb_unnest_json"
+                    && name != c"fastdb_version",
                 0,
                 callback,
                 None,
@@ -160,6 +167,11 @@ pub(crate) fn register(connection: &Connection) -> Result<()> {
         result.and_then(|_| crate::udf::register(connection))
     }
 }
+#[scalar(name = "fastdb_version")]
+fn fastdb_version(_args: &[ExtValue]) -> ExtValue {
+    ExtValue::from_text(crate::VERSION.into())
+}
+
 fn get(args: &[ExtValue], mode: u8) -> Result<ExtValue> {
     if args.len() != 2 {
         return Err(Error::Validation("document accessor arity".into()));

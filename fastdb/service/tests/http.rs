@@ -88,10 +88,9 @@ async fn loopback_http_requires_token_and_rejects_browser_access() {
         send(address, &token, "GET", "/missing", "", "").await.0,
         404
     );
-    assert_eq!(
-        send(address, &token, "GET", "/v1/database", "", "").await.1["sequence"],
-        0
-    );
+    let details = send(address, &token, "GET", "/v1/database", "", "").await.1;
+    assert_eq!(details["sequence"], 0);
+    assert_eq!(details["engineVersion"], fastdb::VERSION);
     let body = "x".repeat(65537);
     assert_eq!(
         send(address, &token, "POST", "/v1/database/query", "", &body)

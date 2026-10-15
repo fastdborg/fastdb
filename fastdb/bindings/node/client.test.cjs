@@ -145,7 +145,7 @@ test('read-v2 keeps duplicate columns, bigint affected counts, and monotonic con
     assert.equal(options.redirect, 'error');
     assert.equal(options.headers.authorization, 'Bearer test-secret');
     if (options.body !== undefined) assert.equal(options.headers['x-fastdb-database-id'], 'local-test');
-    if (options.method === 'GET') return json(details(3));
+    if (options.method === 'GET') return json({ ...details(3), engineVersion: '2.7.0' });
     const request = JSON.parse(options.body);
     requests.push(request);
     return json({ readVersion: 2, requestId: request.requestId, sequence: 5, results: [{ columns: ['x', 'x'], rows: [[encodeValue(1n), encodeValue(new Float64(1))]], affected: '18446744073709551615' }] });
@@ -155,7 +155,7 @@ test('read-v2 keeps duplicate columns, bigint affected counts, and monotonic con
   assert.deepEqual(reply.results[0].columns, ['x', 'x']);
   assert.equal(reply.results[0].rows[0][1].value, 1);
   assert.equal(requests[0].afterSequence, 3);
-  await db.info();
+  assert.equal((await db.info()).engineVersion, '2.7.0');
   assert.equal(db.sequence, 5);
   await assert.rejects(db.read([{ sql: 'SELECT 1' }], { ifSequence: 1 }), /ifSequence/);
   await db.close();

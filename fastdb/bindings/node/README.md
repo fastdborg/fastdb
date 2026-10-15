@@ -490,6 +490,9 @@ Failures and exceeded result/work limits restore the batch. Existing
 
 Sequence conditions cover writes through this shared adapter. Its capabilities
 report `sequenceScope: 'adapter'` and `replayDurability: 'adapter-lifetime'`.
+`info()` also returns `engineVersion`, the FastDB release of the native engine.
+Database URLs report it from local services 2.7.0 and later and from Cloud; it is
+absent for older services.
 Other native or legacy handles do not advance this revision. Studio must reuse
 the managed adapter for each canonical file. Use the service URL for sharing
 between application processes.

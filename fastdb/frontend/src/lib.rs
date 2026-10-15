@@ -83,6 +83,8 @@ use turso_core::{
 };
 pub use value::{Document, Key, Parameters, Record, Value};
 
+pub const VERSION: &str = env!("CARGO_PKG_VERSION");
+
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
     #[error("{0}")]
