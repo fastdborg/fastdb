@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "target": "x86_64-unknown-linux-gnu",
-  "inventorySha256": "56faaa53b588620a0581a16f0e1a5d873e5bd8ce75443d80f06c95495ac8684f",
+  "inventorySha256": "4a54974631150457d5c3e1024ee8da2624328b4e0160304baab318f965b7e67f",
   "scope": "Checksummed crate archive notice candidates; not complete notices or linked-binary evidence",
   "packages": [
     {
@@ -1752,17 +1752,17 @@
     },
     {
       "name": "fastdb-cli",
-      "version": "2.5.3",
+      "version": "2.5.4",
       "status": "workspace_source_requires_separate_review"
     },
     {
       "name": "fastdb-service",
-      "version": "2.5.3",
+      "version": "2.5.4",
       "status": "workspace_source_requires_separate_review"
     },
     {
       "name": "fastdb",
-      "version": "2.5.3",
+      "version": "2.5.4",
       "status": "workspace_source_requires_separate_review"
     },
     {
@@ -1781,7 +1781,7 @@
     },
     {
       "name": "fastql-parser",
-      "version": "2.5.3",
+      "version": "2.5.4",
       "status": "workspace_source_requires_separate_review"
     },
     {
@@ -4495,9 +4495,9 @@
     },
     {
       "name": "rustls",
-      "version": "0.23.45",
+      "version": "0.23.46",
       "status": "archive_verified",
-      "archiveSha256": "0d41d731c7d2f962d1ccc364cec258de3c0e93b38c2fb3ba97ac74513048d634",
+      "archiveSha256": "48e13bd8c0e9365c43cfa5c9e8f9ad49d3c8444926c9aac819e0e4dc503c8fdf",
       "declaredLicenseFile": null,
       "noticeCandidates": [
         {
