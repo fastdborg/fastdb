@@ -418,14 +418,25 @@ so `fastdb://cloud.fastdb.org/v1/organizations/{org}/databases/{db}` and the
 Redirects are rejected, and the bearer token must be passed separately from the
 URL; a token in the URL is refused.
 
-`connect()` requests the database details (id and current sequence) before it
-returns. For Cloud database URLs, `connect({ url, token, deferInfo: true })` skips
-that request: the database id comes from the URL and Cloud capabilities are
-documented. Reads then start from sequence 0 as their lower bound and update the
-sequence from each reply. A write needs a current sequence: `writeAtomic` fetches
-the details first when none is known yet, and `prepareWrite` throws
-`FDB_SEQUENCE_UNKNOWN` (outcome `not-sent`) until a read, `info()` or an explicit
-`afterSequence` supplies one. `deferInfo` is rejected for local URLs.
+For Cloud database URLs, `connect()` returns without a network round trip: the
+database id comes from the URL and Cloud capabilities are documented. Reads start
+from sequence 0 as their lower bound and update the sequence from each reply. A
+write needs a current sequence: `writeAtomic` fetches the database details first
+when none is known yet, and `prepareWrite` throws `FDB_SEQUENCE_UNKNOWN` (outcome
+`not-sent`) until a read, `info()` or an explicit `afterSequence` supplies one.
+Pass `deferInfo: false` to request the details at connect, as 2.5 did by default.
+Other URLs always request the details at connect, and `deferInfo: true` is
+rejected for them.
+
+`connect()` on a Cloud URL also sends a warm request in the background and does
+not wait for it. Cloud then starts the database's container and opens the
+database, so a query sent a second or more later skips that start-up time. Errors
+from the background request are ignored; pass `warm: false` to skip it.
+`await db.warm()` sends the same request and returns `{ state }`: `ready` when the
+database is already open, `starting` when Cloud began opening it, or `skipped`
+when Cloud declined because another database is busy. Call it when your
+application knows a query is coming, for example when a page or a function
+starts. `warm()` is rejected for local URLs.
 
 Results use positional rows, preserving duplicate columns. Integer results are
 bigint. Number results are explicit `Float64` instances with a `.value` number;

@@ -8,6 +8,8 @@ const MAX_REQUEST = 65_536;
 const MAX_RESPONSE = 524_288;
 const MAX_SEQUENCE = Number.MAX_SAFE_INTEGER - 1;
 const construction = Symbol('RemoteDatabase');
+const warmAtConnect = Symbol('warmAtConnect');
+const WARM_STATES = new Set(['ready', 'starting', 'skipped']);
 const { pathToFileURL, fileURLToPath } = require('node:url');
 
 class ClientError extends Error {
@@ -22,6 +24,7 @@ class ClientError extends Error {
 
 async function connect(options) {
   const db = new RemoteDatabase(options, construction);
+  db[warmAtConnect]();
   if (db.deferred) return db;
   try { await db.info(); return db; }
   catch (error) { await db.close(); throw error; }
@@ -29,7 +32,7 @@ async function connect(options) {
 
 class RemoteDatabase {
   #url; #token; #fetch; #timeout; #sequence = 0; #id; #capabilities; #transport;
-  #closed = false; #active = new Set(); #inflightBytes = 0; #sequenceKnown = false; #deferred = false;
+  #closed = false; #active = new Set(); #inflightBytes = 0; #sequenceKnown = false; #deferred = false; #cloud = false; #warm = false;
   constructor(options, key, transport) {
     if (key !== construction) throw new TypeError('use connect()');
     if (!plainObject(options)) throw new TypeError('connection options require an object');
@@ -41,12 +44,20 @@ class RemoteDatabase {
     if (typeof this.#fetch !== 'function') throw new TypeError('fetch must be a function');
     this.#timeout = timeout(options.timeoutMs ?? 20_000);
     if (options.deferInfo !== undefined && typeof options.deferInfo !== 'boolean') throw new TypeError('deferInfo requires a boolean');
+    if (options.warm !== undefined && typeof options.warm !== 'boolean') throw new TypeError('warm requires a boolean');
+    const cloudId = transport ? undefined : /\/databases\/([0-9a-f-]{36})$/.exec(this.#url)?.[1];
+    this.#cloud = cloudId !== undefined;
+    if (!this.#cloud && options.deferInfo === true) throw new TypeError('deferInfo applies only to Cloud database URLs');
+    if (!this.#cloud && options.warm === true) throw new TypeError('warm applies only to Cloud database URLs');
     // Cloud database URLs carry the database id and have documented capabilities,
-    // so the details request can wait until a write needs a current sequence.
-    const cloudId = options.deferInfo === true && !transport ? /\/databases\/([0-9a-f-]{36})$/.exec(this.#url)?.[1] : undefined;
-    if (cloudId) {
+    // so the details request waits until a write needs a current sequence.
+    if (this.#cloud && options.deferInfo !== false) {
       this.#id = cloudId; this.#capabilities = capabilities(this.#url, {}); this.#deferred = true;
-    } else if (options.deferInfo === true) throw new TypeError('deferInfo applies only to Cloud database URLs');
+    }
+    this.#warm = this.#cloud && options.warm !== false;
+  }
+  [warmAtConnect]() {
+    if (this.#warm) this.warm().catch(() => {});
   }
   get deferred() { return this.#deferred; }
   get url() { return this.#url; }
@@ -63,6 +74,13 @@ class RemoteDatabase {
     this.#sequenceKnown = true;
     this.#capabilities = supported;
     return { ...info, capabilities: supported };
+  }
+  async warm(options = {}) {
+    this.#assertOpen();
+    if (!this.#cloud) throw new ClientError('FDB_UNSUPPORTED', 'warm applies only to Cloud database URLs', 'not-sent');
+    const reply = await this.#request('/warm', '{}', options, false);
+    if (!plainObject(reply) || !WARM_STATES.has(reply.state)) throw new ClientError('FDB_PROTOCOL', 'Invalid warm reply', 'read-failed');
+    return { state: reply.state };
   }
   async read(statements, options = {}) {
     this.#assertOpen();

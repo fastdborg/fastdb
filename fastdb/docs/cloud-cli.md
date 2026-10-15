@@ -105,13 +105,27 @@ or establish complete billing enforcement. Reconcile pending version-1 journals
 with the older service/client before upgrading; never translate and resubmit an
 uncertain operation. See [the retry contract](cloud-query-protocol-v2.md).
 
+## Warm a database
+
+```sh
+fastdb cloud --organization ORGANIZATION_UUID db warm DATABASE_UUID
+```
+
+Asks Cloud to start the database's container and open the database without
+running a query. It needs `read` and returns at once with `{"state": ...}`:
+`ready` when the database is already open, `starting` when Cloud began opening it,
+or `skipped` when Cloud declined because another database is busy. Send it a
+second or more before the first query, for example when a job or service starts.
+
 ## Interactive access
 
 ```sh
 fastdb cloud --organization ORGANIZATION_UUID db access DATABASE_UUID
 ```
 
-Access requires `read` and `query`. SQL/FastQL ends in semicolons; each submitted
+Access requires `read` and `query`. When stdin is a terminal, access first sends a
+warm request in the background, so Cloud opens the database while you type.
+SQL/FastQL ends in semicolons; each submitted
 batch commits atomically. `.quit` exits, `.clear` clears unsubmitted input,
 `.help` shows usage and `.retry` reuses the pending request ID, sequence and SQL.
 Uncertain failures or unconfirmed response identities block new SQL until resolved.
@@ -194,7 +208,7 @@ CLI artifact; clean-source packaging and release qualification remain required.
 ## Database service JWTs
 
 The CLI source accepts a database-scoped JWT in `FASTDB_API_KEY` for `db show`,
-`db read`, `db query`, `db retry`, and `db access`. Set `FASTDB_ORGANIZATION_ID` and
+`db read`, `db query`, `db retry`, `db access` and `db warm`. Set `FASTDB_ORGANIZATION_ID` and
 use the database UUID; the CLI does not infer authority from token claims.
 Read-only tokens use `db read`. Interactive access needs both read and query.
 A database token survives removal of its creator; explicit revocation, expiry

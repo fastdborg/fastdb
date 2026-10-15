@@ -75,6 +75,14 @@ matching capability object: the client reports the documented Cloud contract,
 with capability provenance `documented`, not `negotiated`. It must still preserve
 real authorization failures and server limits.
 
+Cloud database URLs also accept POST `/warm` with an empty JSON object and a
+credential that can read the database. Cloud starts the database's container and
+opens the database without running a query, and replies at once with
+`{"state":"ready"|"starting"|"skipped"}` (`starting` uses status 202). `skipped`
+means Cloud declined because another database is busy or was used in the last
+five seconds; a warm request never replaces such a database. Local services have
+no `/warm` route.
+
 ## Shared asynchronous interface
 
 The new Node entry is `@fastdb/node/client`. Importing it does not load the native

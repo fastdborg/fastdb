@@ -98,9 +98,14 @@ try:
         (['db', 'create', 'example'], 'POST', base),
         (['db', 'show', database], 'GET', f'{base}/{database}'),
         (['db', 'delete', database], 'DELETE', f'{base}/{database}'),
+        (['db', 'warm', database], 'POST', f'{base}/{database}/warm'),
     ]:
         run(args)
         assert requests[-1][:2] == (method, path)
+    assert requests[-1][2] == {}
+    before = len(requests)
+    run(['db', 'access', database], "SELECT 1;\n.quit\n")
+    assert not any(path.endswith('/warm') for _, path, _ in requests[before:]), 'piped access sends no warm request'
     details_gets = lambda: sum(1 for request in requests if request[:2] == ('GET', f'{base}/{database}'))
     before = details_gets()
     run(['db', 'access', database], "SELECT 1;\n.quit\n")

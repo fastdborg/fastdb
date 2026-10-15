@@ -8,7 +8,7 @@ mod requests;
 
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 const LIMIT: usize = 64 * 1024;
-const HELP: &str = "fastdb cloud whoami\nfastdb cloud organizations\nfastdb cloud --organization ORG db create NAME\nfastdb cloud --organization ORG db list\nfastdb cloud --organization ORG db show UUID\nfastdb cloud --organization ORG db delete UUID\nfastdb cloud --organization ORG db access UUID\nfastdb cloud --organization ORG db tokens UUID\nfastdb cloud --organization ORG db token-create UUID ISSUANCE_UUID NAME read|write EXPIRES_AT_MS\nfastdb cloud --organization ORG db token-revoke UUID TOKEN_UUID\nfastdb cloud --organization ORG db read UUID JOURNAL < query.sql\nfastdb cloud --organization ORG db query UUID JOURNAL < query.sql\nfastdb cloud --organization ORG db retry JOURNAL\n\nSet FASTDB_API_KEY to an organization key or database JWT (read/query/show/access only). FASTDB_ORGANIZATION_ID can supply ORG.\nFASTDB_CLOUD_URL defaults to https://cloud.fastdb.org. JSON output goes to stdout.\nAccess accepts SQL/FastQL ending in semicolons; batches commit atomically.\n.quit exits, .clear discards input, .retry retries an uncertain request in this session.\nRead needs read scope; query/access need read and query. Management needs manage.\nOne-shot journals retain SQL and request identity. Read retries run a fresh snapshot; queries replay their durable result.";
+const HELP: &str = "fastdb cloud whoami\nfastdb cloud organizations\nfastdb cloud --organization ORG db create NAME\nfastdb cloud --organization ORG db list\nfastdb cloud --organization ORG db show UUID\nfastdb cloud --organization ORG db delete UUID\nfastdb cloud --organization ORG db access UUID\nfastdb cloud --organization ORG db warm UUID\nfastdb cloud --organization ORG db tokens UUID\nfastdb cloud --organization ORG db token-create UUID ISSUANCE_UUID NAME read|write EXPIRES_AT_MS\nfastdb cloud --organization ORG db token-revoke UUID TOKEN_UUID\nfastdb cloud --organization ORG db read UUID JOURNAL < query.sql\nfastdb cloud --organization ORG db query UUID JOURNAL < query.sql\nfastdb cloud --organization ORG db retry JOURNAL\n\nSet FASTDB_API_KEY to an organization key or database JWT (read/query/show/access/warm only). FASTDB_ORGANIZATION_ID can supply ORG.\nFASTDB_CLOUD_URL defaults to https://cloud.fastdb.org. JSON output goes to stdout.\nAccess accepts SQL/FastQL ending in semicolons; batches commit atomically.\n.quit exits, .clear discards input, .retry retries an uncertain request in this session.\nRead and warm need read scope; query/access need read and query. Management needs manage.\nOne-shot journals retain SQL and request identity. Read retries run a fresh snapshot; queries replay their durable result.";
 
 struct Cloud {
     http: Client,
@@ -171,9 +171,27 @@ impl Cloud {
             canonical_uuid(id)?
         ))
     }
+    fn warm_in_background(&self, path: &str) {
+        let Ok(url) = self.origin.join(&format!("{path}/warm")) else {
+            return;
+        };
+        let request = self
+            .http
+            .post(url)
+            .bearer_auth(&self.key)
+            .header("content-type", "application/json")
+            .timeout(Duration::from_secs(10))
+            .body("{}");
+        std::thread::spawn(move || {
+            let _ = request.send();
+        });
+    }
     fn access(&self, id: &str) -> Result<std::process::ExitCode> {
         let path = self.database_path(id)?;
         let interactive = io::stdin().is_terminal();
+        if interactive {
+            self.warm_in_background(&path);
+        }
         let mut stdin = io::stdin().lock();
         let mut reader: Box<dyn crate::input::Input + '_> =
             if interactive && crate::input::terminal_available() {
@@ -383,6 +401,11 @@ pub fn run(mut args: Vec<String>) -> Result<std::process::ExitCode> {
             )
         }
         ["db", "access", id] => return cloud.access(id),
+        ["db", "warm", id] => (
+            Method::POST,
+            format!("{}/warm", cloud.database_path(id)?),
+            Some(json!({})),
+        ),
         ["db", operation @ ("read" | "query"), id, journal] => {
             return requests::start(&cloud, operation, id, journal)
         }
