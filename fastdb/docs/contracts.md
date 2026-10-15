@@ -296,6 +296,31 @@ Collection SELECT and INSERT SELECT support GROUP BY scalar expressions, positiv
 HAVING resolves projected aliases, including aggregate expressions and typed helper inputs, with alias precedence matching the pinned relational frontend. Qualified source fields retain their source meaning. GROUP BY named aliases are supported as described below; qualified paths retain stored-field meaning. Composite grouping keys still fail scalar conversion; full typed equality, GROUP BY alias precedence and broader query semantics remain V1 work. Scalar DISTINCT is described below; CTEs and UNION ALL are described below; set operators are described below; broader compound qualification remains unfinished.
 
 
+## Joining collections with relational tables
+
+A relational table refers to a document by storing its record ID as text, such
+as `'users:tan'`, `'users:42'` or ``'users:`a key`'``. When a document field is
+compared with `=`, `!=`, `IS` or `IS NOT` against a relational column, or tested
+with `IN`/`NOT IN` against a subquery over the other kind of source, a TEXT value
+written as a record ID equals that record. So
+`SELECT p.title, u.name FROM posts p JOIN users u ON u.id = p.user_id` and
+`SELECT name FROM users WHERE id IN (SELECT user_id FROM posts)` work with
+`posts.user_id TEXT`. `EXISTS` and scalar subqueries use the same comparison. The table name is case-insensitive; a key of digits is an
+integer key and other keys are strings. Text that is not a record ID, and
+non-text values, compare as before, and a document string field still equals
+the same text. A comparison with a collection's `id` keeps its key comparison,
+so the engine can use a hash join or key lookup. Relational columns do not
+store typed records: a record value bound to one is stored as opaque bytes and
+does not match, so store the text form instead.
+
+In a join with a collection, an unqualified name is a field of the only
+collection when no relational source has a column with that name. A name that
+is a relational column must be qualified, because any document can have a field
+with that name, unless every collection in the join has a strict schema without
+that top-level field. `id` is always ambiguous. The bare alias of the collection
+(`SELECT p.title, u FROM ...`) returns its whole document, like `doc::row(u)`.
+Unresolvable names fail with `qualify NAME in collection joins`.
+
 ## Mixed query star projections
 
 In collection-aware SELECT queries, relational `alias.*` expands to the pinned engine's visible columns in their native order. Expansion prepares a standalone source SELECT for metadata without executing it, then generates qualified column expressions. This also supports ordinary views. Collection stars produce one typed `document` column per collection source; unqualified `*` expands sources in FROM/join order. Outer-join null extension and relational scalar/blob types remain native.

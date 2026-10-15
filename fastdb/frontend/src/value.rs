@@ -112,6 +112,37 @@ pub(crate) fn encode_document(document: &Document) -> Result<Vec<u8>> {
     Ok(bytes)
 }
 
+pub(crate) fn record_from_text(text: &str) -> Option<Record> {
+    let (table, key) = text.split_once(':')?;
+    if !table.starts_with(|c: char| c.is_ascii_alphabetic() || c == '_')
+        || !table.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+    {
+        return None;
+    }
+    let digits = key.strip_prefix('-').unwrap_or(key);
+    let key = if let Some(quoted) = key
+        .strip_prefix('`')
+        .and_then(|rest| rest.strip_suffix('`'))
+    {
+        if quoted.replace("``", "").contains('`') {
+            return None;
+        }
+        Key::String(quoted.replace("``", "`"))
+    } else if !digits.is_empty() && digits.bytes().all(|b| b.is_ascii_digit()) {
+        Key::Integer(key.parse().ok()?)
+    } else if key.trim() != key || key.chars().any(char::is_control) {
+        return None;
+    } else {
+        Key::String(key.into())
+    };
+    let record = Record {
+        table: table.to_ascii_lowercase(),
+        key,
+    };
+    validate_record(&record).ok()?;
+    Some(record)
+}
+
 pub(crate) fn validate_record(r: &Record) -> Result<()> {
     if r.table.is_empty() || matches!(&r.key, Key::String(s) if s.is_empty()) {
         return Err(Error::Validation(

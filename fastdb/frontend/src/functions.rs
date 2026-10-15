@@ -140,6 +140,11 @@ pub(crate) fn register(connection: &Connection) -> Result<()> {
                 fastdb_version as turso_ext::ScalarFunction,
                 0,
             ),
+            (
+                c"__fastdb_text_record",
+                text_record as turso_ext::ScalarFunction,
+                1,
+            ),
         ]
         .into_iter()
         .try_for_each(|(name, callback, argc)| {
@@ -170,6 +175,19 @@ pub(crate) fn register(connection: &Connection) -> Result<()> {
 #[scalar(name = "fastdb_version")]
 fn fastdb_version(_args: &[ExtValue]) -> ExtValue {
     ExtValue::from_text(crate::VERSION.into())
+}
+
+#[scalar(name = "__fastdb_text_record")]
+fn text_record(args: &[ExtValue]) -> ExtValue {
+    match args
+        .first()
+        .and_then(ExtValue::to_text)
+        .and_then(crate::value::record_from_text)
+    {
+        Some(record) => scalar_result(&Value::Record(record))
+            .unwrap_or_else(|e| ExtValue::error_with_message(e.to_string())),
+        None => ExtValue::null(),
+    }
 }
 
 fn get(args: &[ExtValue], mode: u8) -> Result<ExtValue> {

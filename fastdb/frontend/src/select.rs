@@ -1571,9 +1571,7 @@ impl Scope {
                         }));
                     }
                 }
-                return Err(Error::Validation(
-                    "qualify fields in collection joins".into(),
-                ));
+                return self.unqualified_join_field(parts);
             }
             return Ok(self.sources[0].typed_field(&parts).then_some((0, parts)));
         }
@@ -1587,6 +1585,86 @@ impl Scope {
         Ok(self.sources[i]
             .typed_field(&parts[1..])
             .then(|| (i, parts[1..].to_vec())))
+    }
+    // An unqualified name in a join with a collection is a field of the only
+    // collection when no relational source has that column, and the bare alias
+    // of that collection is its whole document. A relational column name is
+    // resolved only when every collection has a strict schema without that
+    // top-level field; any other document can have it.
+    fn unqualified_join_field(&self, parts: Vec<String>) -> Result<Option<(usize, Vec<String>)>> {
+        let name = &parts[0];
+        let ambiguous = || {
+            Err(Error::Validation(format!(
+                "qualify {name} in collection joins: more than one source can have it"
+            )))
+        };
+        let closed_without = |collection: &crate::Collection| {
+            collection.strict
+                && !name.eq_ignore_ascii_case("id")
+                && !(collection.edge.is_some()
+                    && (name.eq_ignore_ascii_case("source") || name.eq_ignore_ascii_case("target")))
+                && !collection
+                    .fields
+                    .iter()
+                    .any(|field| field.path[0].eq_ignore_ascii_case(name))
+        };
+        let mut columns = self.sources.iter().enumerate().filter(|(_, source)| {
+            source.collection.is_none()
+                && source.derived.as_ref().is_some_and(|columns| {
+                    columns
+                        .iter()
+                        .any(|(column, _)| column.eq_ignore_ascii_case(name))
+                })
+        });
+        let collections = self
+            .sources
+            .iter()
+            .enumerate()
+            .filter(|(_, source)| source.collection.is_some())
+            .map(|(i, _)| i)
+            .collect::<Vec<_>>();
+        if let Some((i, source)) = columns.next() {
+            let closed = collections.iter().all(|&c| {
+                self.sources[c]
+                    .collection
+                    .as_ref()
+                    .is_some_and(closed_without)
+            });
+            if columns.next().is_some() || !closed {
+                return ambiguous();
+            }
+            return Ok(source.typed_field(&parts).then_some((i, parts)));
+        }
+        let unknown_columns = self
+            .sources
+            .iter()
+            .any(|source| source.collection.is_none() && source.derived.is_none());
+        let [collection] = collections.as_slice() else {
+            return ambiguous();
+        };
+        if unknown_columns {
+            return ambiguous();
+        }
+        if self.sources[*collection].alias.eq_ignore_ascii_case(name) {
+            return Ok(None);
+        }
+        Ok(Some((*collection, parts)))
+    }
+    fn whole_document_alias(&self, expr: &Expr) -> Option<usize> {
+        let (Expr::Id(name) | Expr::Name(name)) = expr else {
+            return None;
+        };
+        if self.sources.len() < 2 || self.sources.iter().all(|source| source.derived.is_some()) {
+            return None;
+        }
+        let i = self.sources.iter().position(|source| {
+            source.collection.is_some() && source.alias.eq_ignore_ascii_case(name.as_str())
+        })?;
+        matches!(
+            self.unqualified_join_field(vec![name.as_str().to_owned()]),
+            Ok(None)
+        )
+        .then_some(i)
     }
     fn projection_field(&self, expr: &Expr) -> Result<Option<(usize, Vec<String>)>> {
         if let Some(field) = self.field(expr)? {
@@ -2308,7 +2386,9 @@ impl Scope {
                     } else {
                         shared.as_str()
                     };
-                    *expr = expression(&format!("(WITH __fastdb_member_lhs(k) AS NOT MATERIALIZED (SELECT {value}{affinity_arm}){local} SELECT CASE WHEN typeof(k)='blob' THEN {key} {negate}IN (SELECT __fastdb_equality_key(__fastdb_pack(v)) FROM {shared}) ELSE {key} {negate}IN (SELECT {native_value} FROM {shared}) END FROM __fastdb_member_lhs)"))?;
+                    // Relational TEXT written as a record ID also matches that record.
+                    let records = format!("SELECT __fastdb_text_record(v) FROM {shared} WHERE typeof(v)='text' AND __fastdb_text_record(v) IS NOT NULL");
+                    *expr = expression(&format!("(WITH __fastdb_member_lhs(k) AS NOT MATERIALIZED (SELECT {value}{affinity_arm}){local} SELECT CASE WHEN typeof(k)='blob' THEN {key} {negate}IN (SELECT __fastdb_equality_key(__fastdb_pack(v)) FROM {shared} UNION ALL {records}) ELSE {key} {negate}IN (SELECT {native_value} FROM {shared}) END FROM __fastdb_member_lhs)"))?;
                     return Ok(());
                 }
                 let mut value = *lhs.clone();
@@ -2347,7 +2427,17 @@ impl Scope {
                     } else {
                         "+v"
                     };
-                    *expr = expression(&format!("(WITH __fastdb_in_source(v) AS MATERIALIZED {query} SELECT CASE WHEN typeof({value})='blob' THEN __fastdb_equality_key(__fastdb_pack({value})) {negate}IN (SELECT {key} FROM __fastdb_in_source) ELSE {value} {negate}IN (SELECT {key} FROM __fastdb_in_source) END)"))?;
+                    // Relational TEXT written as a record ID also matches that record.
+                    // Only parsed record IDs take the extra branch, so other values
+                    // keep native IN results, including NULL for an unmatched set.
+                    let members = format!("(SELECT {key} FROM __fastdb_in_source)");
+                    let record = format!("__fastdb_text_record({value})");
+                    let record_member = if *not {
+                        format!("({value} NOT IN {members} AND {record} NOT IN {members})")
+                    } else {
+                        format!("({value} IN {members} OR {record} IN {members})")
+                    };
+                    *expr = expression(&format!("(WITH __fastdb_in_source(v) AS MATERIALIZED {query} SELECT CASE WHEN typeof({value})='blob' THEN __fastdb_equality_key(__fastdb_pack({value})) {negate}IN {members} WHEN typeof({value})='text' AND {record} IS NOT NULL THEN {record_member} ELSE {value} {negate}IN {members} END)"))?;
                 } else {
                     self.typed(&mut value)?;
                     *expr = expression(&format!(
@@ -2603,10 +2693,35 @@ impl Scope {
                         // column in the other branch so native affinity and
                         // implicit collation survive expression lowering.
                         let key = format!("__fastdb_unwrap(__fastdb_pack({column}))");
+                        // A relational TEXT value written as a record ID, such as
+                        // 'users:tan', equals that record. A collection ID keeps
+                        // its primary-key comparison so joins can seek on it.
+                        let record = format!("__fastdb_text_record({column})");
+                        let document_id =
+                            self.field(if on_left { b } else { a })?
+                                .is_some_and(|(i, path)| {
+                                    path == ["id"] && self.sources[i].collection.is_some()
+                                });
+                        if document_id {
+                            let value = format!(
+                                "CASE WHEN typeof({column})='blob' THEN {key} ELSE coalesce({record}, {column}) END"
+                            );
+                            *expr = expression(&if on_left {
+                                format!("{value} {op} {right}")
+                            } else {
+                                format!("{left} {op} {value}")
+                            })?;
+                            return Ok(());
+                        }
                         let binary = if on_left {
                             format!("{key} {op} {right}")
                         } else {
                             format!("{left} {op} {key}")
+                        };
+                        let as_record = if on_left {
+                            format!("{record} {op} {right}")
+                        } else {
+                            format!("{left} {op} {record}")
                         };
                         // Accessor arguments refer to physical BLOB columns.
                         // Visit the native column first so their incidental
@@ -2637,8 +2752,13 @@ impl Scope {
                         } else {
                             format!("{left} {op} {right}")
                         };
+                        let either = if matches!(op, Operator::Equals | Operator::Is) {
+                            "OR"
+                        } else {
+                            "AND"
+                        };
                         *expr = expression(&format!(
-                            "CASE WHEN typeof({column})='blob' THEN {binary} ELSE {scalar} END"
+                            "CASE WHEN typeof({column})='blob' THEN {binary} WHEN typeof({column})='text' AND {record} IS NOT NULL THEN ({as_record} {either} {scalar}) ELSE {scalar} END"
                         ))?;
                         return Ok(());
                     }
@@ -6802,6 +6922,13 @@ impl Connection {
                     {
                         return Err(unsupported("OMIT in RETURNING"));
                     }
+                    let whole_document = scope.whole_document_alias(&expr);
+                    if let Some(i) = whole_document {
+                        expr = expression(&format!(
+                            "__fastdb_h_doc_row({})",
+                            quote(&scope.sources[i].alias)
+                        ))?;
+                    }
                     let field = scope.field(&expr)?.or(match &expr {
                         Expr::FunctionCall { name, args, .. }
                             if name.as_str() == "__fastdb_h_doc_project" =>
@@ -6815,6 +6942,8 @@ impl Connection {
                     });
                     let name = if let Some(alias) = alias.as_ref().filter(|a| a.is_explicit()) {
                         alias.name().as_str().to_owned()
+                    } else if let Some(i) = whole_document {
+                        scope.sources[i].alias.clone()
                     } else if let Some((index, path)) = &field {
                         let name = path.last().expect("nonempty path");
                         if path.len() == 1 {

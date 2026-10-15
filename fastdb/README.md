@@ -1,11 +1,15 @@
 # FastDB embedded database
 
-FastDB and FastQL [2.7.0 are released for Linux x64](docs/release-2.7.0.md),
+FastDB and FastQL [2.8.0 are released for Linux x64](docs/release-2.8.0.md),
 with native Rust, Node.js/TypeScript, Python, PHP, Swift, C# and Go clients.
-See the [completed checklist](docs/v2.7.0-tasks.md),
-[verified download](docs/release-2.7.0-download.json),
+See the [completed checklist](docs/v2.8.0-tasks.md),
+[verified download](docs/release-2.8.0-download.json),
 [language contracts](docs/v2.2-language.md) and [engine provenance](UPSTREAM.md).
 
+2.8.0 joins collections with relational tables that store record IDs as text
+(`ON u.id = p.user_id` with `posts.user_id = 'users:tan'`) and resolves
+unqualified names in collection joins; see the
+[contract](docs/contracts.md#joining-collections-with-relational-tables).
 2.7.0 reports the engine release: `SELECT fastdb_version()`, `fastdb --version`
 and `engineVersion` in the database details. 2.6.0 made Cloud connections start
 faster: `connect()` skips the details

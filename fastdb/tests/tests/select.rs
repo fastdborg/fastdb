@@ -317,6 +317,185 @@ fn full_documents_preserve_absence_and_literal_keys() {
     );
 }
 #[test]
+fn relational_record_text_joins_documents_by_record() {
+    let (_db, c) = setup();
+    query(&c, "CREATE TABLE roles");
+    query(&c, "INSERT INTO roles {id: roles:`a-1`, name: 'admin'}");
+    query(
+        &c,
+        "UPDATE users SET role = roles:`a-1`, note = 'users:10' WHERE id = users:2",
+    );
+    query(
+        &c,
+        "CREATE TABLE notes(id INTEGER PRIMARY KEY, body TEXT, user_id TEXT, role_ref TEXT)",
+    );
+    query(&c, "INSERT INTO notes VALUES (1, 'hi', 'users:2', 'roles:a-1'), (2, 'yo', 'users:10', 'roles:`a-1`'), (3, 'neg', 'users:-1', NULL), (4, 'none', 'users:404', 'x'), (5, 'text', 'Bob', NULL)");
+    let names = |sql: &str| -> Vec<Vec<Value>> { query(&c, sql).rows };
+    let text = |values: &[(&str, Option<&str>)]| -> Vec<Vec<Value>> {
+        values
+            .iter()
+            .map(|(a, b)| {
+                vec![
+                    Value::String((*a).into()),
+                    b.map_or(Value::Null, |b| Value::String(b.into())),
+                ]
+            })
+            .collect()
+    };
+    let joined = text(&[
+        ("hi", Some("Bob")),
+        ("yo", Some("Alice")),
+        ("neg", Some("Carol")),
+    ]);
+    assert_eq!(
+        names("SELECT n.body, u.name FROM notes n JOIN users u ON u.id = n.user_id ORDER BY n.id"),
+        joined
+    );
+    assert_eq!(
+        names("SELECT n.body, u.name FROM notes n JOIN users u ON n.user_id = u.id ORDER BY n.id"),
+        joined
+    );
+    assert_eq!(
+        names("SELECT n.body, u.name FROM notes n, users u WHERE u.id = n.user_id ORDER BY n.id"),
+        joined
+    );
+    assert_eq!(
+        names("SELECT n.body, u.name FROM notes n LEFT JOIN users u ON u.id = n.user_id ORDER BY n.id"),
+        text(&[("hi", Some("Bob")), ("yo", Some("Alice")), ("neg", Some("Carol")), ("none", None), ("text", None)])
+    );
+    assert_eq!(
+        names(
+            "SELECT n.body, u.name FROM notes n JOIN users u ON u.role = n.role_ref ORDER BY n.id"
+        ),
+        text(&[("hi", Some("Bob")), ("yo", Some("Bob"))])
+    );
+    assert_eq!(
+        names("SELECT n.body, u.name FROM notes n JOIN users u ON u.note = n.user_id"),
+        text(&[("yo", Some("Bob"))])
+    );
+    assert_eq!(
+        names("SELECT n.body, u.name FROM notes n JOIN users u ON u.name = n.user_id"),
+        text(&[("text", Some("Bob"))])
+    );
+    assert_eq!(
+        names("SELECT count(*) FROM notes n JOIN users u ON u.id != n.user_id"),
+        vec![vec![Value::Integer(12)]]
+    );
+    let membership = |sql: &str| -> Vec<String> {
+        query(&c, sql)
+            .rows
+            .into_iter()
+            .map(|row| match &row[0] {
+                Value::String(text) => text.clone(),
+                other => panic!("{other:?}"),
+            })
+            .collect()
+    };
+    assert_eq!(
+        membership("SELECT name FROM users WHERE id IN (SELECT user_id FROM notes) ORDER BY name"),
+        ["Alice", "Bob", "Carol"]
+    );
+    assert_eq!(
+        membership("SELECT name FROM users WHERE id NOT IN (SELECT user_id FROM notes WHERE id < 3) ORDER BY name"),
+        ["Carol"]
+    );
+    assert_eq!(
+        membership("SELECT body FROM notes WHERE user_id IN (SELECT id FROM users) ORDER BY id"),
+        ["hi", "yo", "neg"]
+    );
+    assert_eq!(
+        membership(
+            "SELECT body FROM notes WHERE user_id NOT IN (SELECT id FROM users) ORDER BY id"
+        ),
+        ["none", "text"]
+    );
+    let plan = query(
+        &c,
+        "EXPLAIN QUERY PLAN SELECT n.body, u.name FROM notes n JOIN users u ON u.id = n.user_id",
+    );
+    let plan = format!("{:?}", plan.rows);
+    assert!(
+        !plan.contains("SCAN notes") || plan.contains("HASH JOIN") || plan.contains("PRIMARY KEY"),
+        "{plan}"
+    );
+}
+#[test]
+fn collection_joins_resolve_unqualified_names_and_bare_aliases() {
+    let (_db, c) = setup();
+    query(
+        &c,
+        "CREATE TABLE notes(id INTEGER PRIMARY KEY, body TEXT, user_id TEXT)",
+    );
+    query(
+        &c,
+        "INSERT INTO notes (id, body, user_id) VALUES (1, 'hi', 'users:2'), (2, 'yo', 'users:10')",
+    );
+    assert_eq!(
+        query(&c, "SELECT n.body, name, active FROM notes n JOIN users u ON u.id = n.user_id ORDER BY n.id").rows,
+        vec![
+            vec![Value::String("hi".into()), Value::String("Bob".into()), Value::Boolean(true)],
+            vec![Value::String("yo".into()), Value::String("Alice".into()), Value::Boolean(false)],
+        ]
+    );
+    assert_eq!(
+        query(
+            &c,
+            "SELECT notes.body FROM notes JOIN users ON users.id = notes.user_id WHERE active"
+        )
+        .rows,
+        vec![vec![Value::String("hi".into())]]
+    );
+    let documents = query(
+        &c,
+        "SELECT n.body, u FROM notes n JOIN users u ON u.id = n.user_id ORDER BY n.id",
+    );
+    assert_eq!(documents.columns, vec!["body".to_owned(), "u".to_owned()]);
+    let Value::Object(bob) = &documents.rows[0][1] else {
+        panic!("whole document expected: {:?}", documents.rows[0][1]);
+    };
+    assert_eq!(bob.get("name"), Some(&Value::String("Bob".into())));
+    // Any document can have a field named like a relational column.
+    for (sql, name) in [
+        (
+            "SELECT body FROM notes n JOIN users u ON u.id = n.user_id",
+            "body",
+        ),
+        (
+            "SELECT n.body FROM notes n JOIN users u ON u.id = user_id",
+            "user_id",
+        ),
+        (
+            "SELECT id FROM notes n JOIN users u ON u.id = n.user_id",
+            "id",
+        ),
+    ] {
+        let error = c.execute(sql, &Parameters::new()).unwrap_err();
+        assert!(
+            error.to_string().contains(&format!("qualify {name}")),
+            "{sql}: {error}"
+        );
+    }
+    query(&c, "CREATE TABLE people");
+    query(&c, "DEFINE FIELD name ON people TYPE string");
+    query(&c, "DEFINE SCHEMA ON people STRICT");
+    query(&c, "INSERT INTO people {id: people:1, name: 'Dana'}");
+    query(
+        &c,
+        "INSERT INTO notes (id, body, user_id) VALUES (3, 'strict', 'people:1')",
+    );
+    assert_eq!(
+        query(
+            &c,
+            "SELECT body, name FROM notes n JOIN people p ON p.id = user_id"
+        )
+        .rows,
+        vec![vec![
+            Value::String("strict".into()),
+            Value::String("Dana".into())
+        ]]
+    );
+}
+#[test]
 fn joins_and_typed_parameter_filters() {
     let (_db, c) = setup();
     query(&c, "CREATE TABLE posts");
