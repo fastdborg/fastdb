@@ -7,7 +7,7 @@
     "build"
   ],
   "scope": "Cargo dependency declarations; includes build tools, excludes dev dependencies; not proof of linked code or complete notices",
-  "lockfileSha256": "4675dbaa8bda6789a1012d5153f09259b5e86f97872bf15d7fe191c92c1cc568",
+  "lockfileSha256": "a69815193955c4fd64388249950109c804837848655b71b6a5bc555bb7a0eed5",
   "packages": [
     {
       "name": "aead",
@@ -1131,7 +1131,7 @@
     },
     {
       "name": "rustls",
-      "version": "0.23.45",
+      "version": "0.23.46",
       "licenseExpression": "Apache-2.0 OR ISC OR MIT"
     },
     {
