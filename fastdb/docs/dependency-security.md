@@ -1,12 +1,14 @@
-# Dependency security review for 2.5.4
-Reviewed 2026-10-15 for the Linux x64 2.5.4 candidate. The exact lockfile
+# Dependency security review for 2.6.0
+Reviewed 2026-10-15 for the Linux x64 2.6.0 candidate. The exact lockfile
 scan covers 359 package/version identities against the RustSec advisory
-database at `edb58f5974b83eb8302332821cb6d389777aa351` (fetched 2026-10-15,
-1,329 advisories) using the pinned `cargo-audit 0.22.2` binary. It found zero
-unresolved shipping findings; the retained lru informational exception below
-is unchanged.
+database at `edb58f5974b83eb8302332821cb6d389777aa351` (1,329 advisories, the
+same revision as the 2.5.4 review) using the pinned `cargo-audit 0.22.2`
+binary. It found zero unresolved shipping findings; the retained lru
+informational exception below is unchanged. 2.6.0 adds no dependency: the
+lockfile differs from 2.5.4 only in the nine FastDB workspace package versions.
 
-The newer database adds four rustls 0.23.45 advisories (RUSTSEC-2026-0346,
+The 2.5.4 review used the same database. That database added four rustls
+0.23.45 advisories (RUSTSEC-2026-0346,
 0347, 0348 and 0349), all fixed in 0.23.46. rustls reaches only the CLI,
 through reqwest, so 2.5.4 updates it to 0.23.46; no other package changes and
 the license texts are the same. Native QuickJS-NG, USearch and SQLite

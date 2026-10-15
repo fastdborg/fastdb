@@ -1,7 +1,7 @@
 {
-  "reviewed_at": "2026-10-15T02:08:49.680257+00:00",
-  "source_commit": "d4e5457bb0eb7abf37d591bd9b9061a16bb450bf",
-  "cargo_lock_sha256": "a69815193955c4fd64388249950109c804837848655b71b6a5bc555bb7a0eed5",
+  "reviewed_at": "2026-10-15T03:54:09.570487+00:00",
+  "source_commit": "d5660e6f4972e2fa266eab19e3eea766b2d6d837",
+  "cargo_lock_sha256": "2bc51360abdc655b925384e2e44de9a09eaf2488fb0b1488c64d7b5b96bdc305",
   "advisory_database": {
     "repository": "https://github.com/RustSec/advisory-db.git",
     "commit": "edb58f5974b83eb8302332821cb6d389777aa351",
@@ -311,31 +311,31 @@
     },
     {
       "name": "fastdb",
-      "version": "2.5.4"
+      "version": "2.6.0"
     },
     {
       "name": "fastdb-c",
-      "version": "2.5.4"
+      "version": "2.6.0"
     },
     {
       "name": "fastdb-cli",
-      "version": "2.5.4"
+      "version": "2.6.0"
     },
     {
       "name": "fastdb-node",
-      "version": "2.5.4"
+      "version": "2.6.0"
     },
     {
       "name": "fastdb-protocol",
-      "version": "2.5.4"
+      "version": "2.6.0"
     },
     {
       "name": "fastdb-python",
-      "version": "2.5.4"
+      "version": "2.6.0"
     },
     {
       "name": "fastdb-service",
-      "version": "2.5.4"
+      "version": "2.6.0"
     },
     {
       "name": "fastdivide",
@@ -343,7 +343,7 @@
     },
     {
       "name": "fastql-parser",
-      "version": "2.5.4"
+      "version": "2.6.0"
     },
     {
       "name": "fastrand",
