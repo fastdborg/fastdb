@@ -1,12 +1,14 @@
 # FastDB embedded database
 
-FastDB and FastQL [2.6.0 are released for Linux x64](docs/release-2.6.0.md),
+FastDB and FastQL [2.7.0 are released for Linux x64](docs/release-2.7.0.md),
 with native Rust, Node.js/TypeScript, Python, PHP, Swift, C# and Go clients.
-See the [completed checklist](docs/v2.6.0-tasks.md),
-[verified download](docs/release-2.6.0-download.json),
+See the [completed checklist](docs/v2.7.0-tasks.md),
+[verified download](docs/release-2.7.0-download.json),
 [language contracts](docs/v2.2-language.md) and [engine provenance](UPSTREAM.md).
 
-2.6.0 makes Cloud connections start faster: `connect()` skips the details
+2.7.0 reports the engine release: `SELECT fastdb_version()`, `fastdb --version`
+and `engineVersion` in the database details. 2.6.0 made Cloud connections start
+faster: `connect()` skips the details
 request and warms the database in the background. 2.5.4 added `fastdb://`
 connection URLs. 2.5.3 made
 collection scans and grouping cheaper per document. 2.5.2 made
