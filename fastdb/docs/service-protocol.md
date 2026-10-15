@@ -70,7 +70,9 @@ unverified token claims. Cloud database JWTs require the stable UUID route.
 
 GET the database URL for its stable `id` and current `sequence`. POST `/read` and
 `/query` relative to that URL. Local details additionally report `serviceVersion:1`,
-capabilities, finite limits, and the journal mode. Cloud details currently have no
+capabilities, finite limits, and the journal mode. Local services from 2.7.0 and
+Cloud also report `engineVersion`, the FastDB release of the engine; a client must
+accept details without it from older services. Cloud details currently have no
 matching capability object: the client reports the documented Cloud contract,
 with capability provenance `documented`, not `negotiated`. It must still preserve
 real authorization failures and server limits.

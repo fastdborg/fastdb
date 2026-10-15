@@ -4,7 +4,7 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <PackageId>FastDB.Embedded</PackageId>
-    <Version>2.6.0</Version>
+    <Version>2.7.0</Version>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
     <PackageReadmeFile>README.md</PackageReadmeFile>
     <Description>Native embedded FastDB and FastQL</Description>

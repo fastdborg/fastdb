@@ -24,6 +24,23 @@ fn run(script: &str) -> (bool, Vec<serde_json::Value>) {
     (output.status.success(), rows)
 }
 #[test]
+fn version_flag_and_sql_function_report_the_same_release() {
+    let expected = format!("fastdb {}\n", env!("CARGO_PKG_VERSION"));
+    for binary in [
+        env!("CARGO_BIN_EXE_fastdb"),
+        env!("CARGO_BIN_EXE_fastdb-cli"),
+    ] {
+        for flag in ["--version", "-V"] {
+            let output = Command::new(binary).arg(flag).output().unwrap();
+            assert!(output.status.success());
+            assert_eq!(String::from_utf8(output.stdout).unwrap(), expected);
+        }
+    }
+    let (ok, rows) = run("SELECT fastdb_version()");
+    assert!(ok);
+    assert_eq!(rows[0]["rows"][0][0]["value"], env!("CARGO_PKG_VERSION"));
+}
+#[test]
 fn cli_runs_multiline_scripts_and_returns_nonzero_on_first_failure() {
     let (ok,rows)=run("CREATE TABLE posts;\nINSERT INTO posts {\n id:posts:p1, text:'a;b'\n}; SELECT text FROM posts");
     assert!(ok);

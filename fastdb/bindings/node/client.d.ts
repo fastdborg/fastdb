@@ -18,7 +18,12 @@ export interface PreparedWrite { readonly version: 1; readonly url: string; read
 export interface QueryResult { columns: string[]; rows: Value[][]; affected: bigint; }
 export interface BatchResult { requestId: string; sequence: number; results: QueryResult[]; readVersion?: 2; executionWork?: unknown; }
 export interface Capabilities { provenance: 'negotiated' | 'documented'; [key: string]: unknown; }
-export interface DatabaseInfo { id: string; sequence: number; capabilities: Capabilities; [key: string]: unknown; }
+export interface DatabaseInfo {
+  id: string; sequence: number; capabilities: Capabilities;
+  /** FastDB release of the engine, such as "2.7.0". FastDB 2.7.0 and later report it. */
+  engineVersion?: string;
+  [key: string]: unknown;
+}
 export interface ConnectOptions {
   url: string; token: string; timeoutMs?: number; fetch?: typeof globalThis.fetch;
   /** Cloud database URLs skip the details request at connect by default; the first write without afterSequence fetches it. Pass false to request it at connect. */

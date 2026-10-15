@@ -255,6 +255,20 @@ Collection/object vector32/vector64 constructors preserve typed values. Exact-di
 Typed vectors also support the pinned sparse32, float8 and bit encodings. Sparse indexes must be strictly increasing and below dimension; quantization metadata/components must be finite; lengths, trailing metadata and padding must be valid. Constructors preserve native bytes. Slice/concat preserve typed results, with native unsupported-format errors for bit/float8 operations. FastDB corrects the pinned sparse-concat index-offset defect in its typed frontend; ordinary SQL remains delegated unchanged. These formats retain the same positive-dimension and 65,536-dimension limit and need wider fuzz/numerical/platform qualification before release.
 
 
+## Engine version
+
+`fastdb_version()` returns the FastDB release of the engine that runs the
+statement, such as `'2.7.0'`. It takes no arguments and reads no data. A
+database file reports the version of the client package that opens it; the
+local service reports its own engine. Cloud supports the function once it runs a
+2.7.0 or later engine. The function is not deterministic, so field CHECK
+expressions, computed fields and index expressions reject it.
+
+`fastdb --version` (or `-V`) prints the same release, and the database details
+reply returns it as `engineVersion`. `sqlite_version()` reports the SQLite
+compatibility level. `turso_version()` reports the upstream Turso engine, or the
+version that wrote the file header. Neither is a FastDB release.
+
 ## Bundled string functions
 
 The 2.1 candidate embeds fixed JavaScript source through pinned `rquickjs = 0.13.0` (MSRV 1.87), bundling QuickJS-NG 0.16.2. See [the dependency review](dependency-security.md) for the runtime update. The public catalog currently contains:

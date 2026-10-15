@@ -181,7 +181,7 @@ impl DatabaseService {
         let _permit = self.admission.acquire(deadline)?;
         let publication = self.lock_before(deadline, || self.publication.try_lock())?;
         Ok(
-            json!({"id":self.database_id,"sequence":publication.sequence,"serviceVersion":1,"journalMode":"mvcc",
+            json!({"id":self.database_id,"sequence":publication.sequence,"serviceVersion":1,"engineVersion":fastdb::VERSION,"journalMode":"mvcc",
             "capabilities":{"readVersion":2,"atomicWrites":true,"replayWindow":64,"exactSequenceCondition":true,"metadata":true,"checkedWork":true,"foreignKeys":true},
             "limits":{"maxRequestBytes":65536,"maxStatements":32,"maxRows":1000,"maxResultBytes":262144,"maxResponseBytes":524288,"activeRequests":4,"queuedRequests":32,"connections":5,"executionTimeoutMs":15000,"rowsRead":1000000,"rowMutations":100000,"vmSteps":10000000}}),
         )

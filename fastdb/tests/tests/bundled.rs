@@ -156,3 +156,23 @@ fn bundled_output_overflow_matches_native_transaction_disposition() {
         }
     }
 }
+#[test]
+fn fastdb_version_reports_the_release_and_cannot_enter_stored_definitions() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    assert_eq!(
+        q(&c, "SELECT fastdb_version() AS version").rows,
+        vec![vec![Value::String(fastdb::VERSION.into())]]
+    );
+    assert_eq!(fastdb::VERSION, env!("CARGO_PKG_VERSION"));
+    q(&c, "CREATE TABLE posts");
+    q(&c, "CREATE TABLE notes(body TEXT)");
+    for sql in [
+        "SELECT fastdb_version(1)",
+        "DEFINE FIELD build ON posts TYPE string CHECK (build = fastdb_version())",
+        "CREATE INDEX by_version ON notes(fastdb_version())",
+    ] {
+        assert!(c.execute(sql, &Parameters::new()).is_err(), "{sql}");
+    }
+    q(&c, "CREATE INDEX by_length ON notes(length(body))");
+}

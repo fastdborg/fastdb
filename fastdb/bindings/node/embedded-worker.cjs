@@ -30,8 +30,11 @@ if (database) parentPort.on('message', ({ id, operation, body, cancellationKey }
     if (operation === 'info') {
       const mode = JSON.parse(database.execute('PRAGMA journal_mode', '{}'));
       if (mode.execution.error) fail('FDB_STORAGE', 'Cannot inspect embedded journal mode', 'read-failed');
+      const engine = JSON.parse(database.execute('SELECT fastdb_version()', '{}'));
+      if (engine.execution.error) fail('FDB_STORAGE', 'Cannot read the embedded engine version', 'read-failed');
       parentPort.postMessage({ id, result: {
         id: workerData.databaseId, sequence, adapterVersion: 1,
+        engineVersion: engine.execution.result.rows[0][0].value,
         journalMode: mode.execution.result.rows[0][0].value,
         capabilities: { readVersion: 2, atomicWrites: true, replayWindow: 64, exactSequenceCondition: true, sequenceScope: 'adapter', replayDurability: 'adapter-lifetime', metadata: true, checkedWork: true, foreignKeys: true },
         limits: { maxRequestBytes: 65536, maxStatements: 32, maxRows: 1000, maxResultBytes: 262144, activeRequests: 1, queuedRequests: 32, rowsRead: 1000000, rowMutations: 100000, vmSteps: 10000000 },
