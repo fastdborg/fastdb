@@ -1,12 +1,14 @@
 //! Tracked one-shot reads and queries with immutable crash-recovery identity.
-use super::{canonical_uuid, journal, Cloud, Method, Result, Value, LIMIT};
+use super::{
+    canonical_uuid, journal, Cloud, Method, Result, Value, LIMIT, QUERY_LIMIT, QUERY_VERSION,
+};
 use serde_json::json;
 use std::io::{self, Read};
 use std::path::Path;
 use std::process::ExitCode;
 const MAX_SEQUENCE: u64 = 9_007_199_254_740_990;
 
-fn validate_body(body: &Value) -> Result<()> {
+fn validate_body(body: &Value, limit: usize) -> Result<()> {
     canonical_uuid(body["requestId"].as_str().ok_or("Missing request ID")?)?;
     if body["afterSequence"]
         .as_u64()
@@ -25,8 +27,13 @@ fn validate_body(body: &Value) -> Result<()> {
     {
         return Err("Expected 1 to 32 SQL statements".into());
     }
-    if serde_json::to_vec(body)?.len() > LIMIT {
-        return Err("Request exceeds 64 KiB".into());
+    if serde_json::to_vec(body)?.len() > limit {
+        return Err(if limit == QUERY_LIMIT {
+            "Request exceeds 1 MiB"
+        } else {
+            "Request exceeds 64 KiB"
+        }
+        .into());
     }
     Ok(())
 }
@@ -66,7 +73,17 @@ fn dispatch(cloud: &Cloud, value: &Value) -> Result<ExitCode> {
         .as_str()
         .ok_or("Missing database UUID")?;
     let op = value["operation"].as_str().ok_or("Missing operation")?;
-    if value["version"] != (if op == "read" { 3 } else { 2 })
+    let query_version = match (op, value["version"].as_u64()) {
+        ("read", Some(3)) | ("query", Some(2)) => 2,
+        ("read", Some(5)) | ("query", Some(4)) => QUERY_VERSION,
+        _ => 0,
+    };
+    let limit = if query_version == QUERY_VERSION {
+        QUERY_LIMIT
+    } else {
+        LIMIT
+    };
+    if query_version == 0
         || value["kind"] != "cloud-request"
         || value["origin"] != cloud.origin.as_str()
         || value["organizationId"] != cloud.organization()?
@@ -81,11 +98,11 @@ fn dispatch(cloud: &Cloud, value: &Value) -> Result<ExitCode> {
     let body = &value["request"];
     if (op == "read") != (body["readVersion"] == 2) {
         return Err(
-            "Read journals require version 3 with readVersion 2; each retry runs a fresh snapshot"
+            "Read journals require version 3 or 5 with readVersion 2; each retry runs a fresh snapshot"
                 .into(),
         );
     }
-    validate_body(body)?;
+    validate_body(body, limit)?;
     if op == "read" {
         eprintln!("Read retries execute again and may observe newer committed data.");
     }
@@ -93,7 +110,7 @@ fn dispatch(cloud: &Cloud, value: &Value) -> Result<ExitCode> {
         "Request {}. Keep the journal and use db retry after an uncertain reply.",
         body["requestId"]
     );
-    match cloud.request(Method::POST, &path, Some(body)) {
+    match cloud.query_request(&path, body, query_version) {
         Ok(reply) => {
             if !confirmed(body, &reply) {
                 return Err("Unconfirmed response identity; retry the same journal".into());
@@ -116,10 +133,10 @@ pub(super) fn start(cloud: &Cloud, operation: &str, id: &str, path: &str) -> Res
     }
     let mut sql = String::new();
     io::stdin()
-        .take((LIMIT + 1) as u64)
+        .take((QUERY_LIMIT + 1) as u64)
         .read_to_string(&mut sql)?;
-    if sql.len() > LIMIT {
-        return Err("Cloud input exceeds 64 KiB".into());
+    if sql.len() > QUERY_LIMIT {
+        return Err("Cloud input exceeds 1 MiB".into());
     }
     let statements = fastql_parser::split_script(&sql).map_err(|_| "Invalid SQL/FastQL script")?;
     let mut body = json!({"requestId":uuid::Uuid::new_v4().to_string(),"afterSequence":0,
@@ -127,14 +144,14 @@ pub(super) fn start(cloud: &Cloud, operation: &str, id: &str, path: &str) -> Res
     if operation == "read" {
         body["readVersion"] = json!(2);
     }
-    validate_body(&body)?;
+    validate_body(&body, QUERY_LIMIT)?;
     body["afterSequence"] = json!(sequence(cloud, id)?);
-    validate_body(&body)?;
-    let value = json!({"version":if operation == "read" { 3 } else { 2 },"kind":"cloud-request","origin":cloud.origin.as_str(),"organizationId":cloud.organization()?,
+    validate_body(&body, QUERY_LIMIT)?;
+    let value = json!({"version":if operation == "read" { 5 } else { 4 },"kind":"cloud-request","origin":cloud.origin.as_str(),"organizationId":cloud.organization()?,
         "databaseId":id,"operation":operation,"request":body});
     journal::save(path, &value)?;
     dispatch(cloud, &value)
 }
 pub(super) fn retry(cloud: &Cloud, path: &str) -> Result<ExitCode> {
-    dispatch(cloud, &journal::load(path, LIMIT + 4096)?)
+    dispatch(cloud, &journal::load(path, 2 * QUERY_LIMIT + 4096)?)
 }

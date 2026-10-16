@@ -3030,7 +3030,9 @@ impl Scope {
 fn result_label(expr: &Expr) -> Result<String> {
     match expr {
         Expr::Id(name) | Expr::Name(name) => Ok(name.as_str().to_owned()),
-        Expr::Qualified(qualifier, column) => Ok(format!("{}.{}", qualifier.as_str(), column.as_str())),
+        Expr::Qualified(qualifier, column) => {
+            Ok(format!("{}.{}", qualifier.as_str(), column.as_str()))
+        }
         _ => public_expression_name(expr),
     }
 }

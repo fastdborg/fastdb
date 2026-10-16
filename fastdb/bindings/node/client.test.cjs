@@ -6,7 +6,7 @@ const { once } = require('node:events');
 const { spawnSync } = require('node:child_process');
 const fs = require('node:fs/promises');
 const path = require('node:path');
-const { connect, ClientError, Float64, Record, Vector, encodeValue, decodeValue, normalizeUrl, saveRequest, loadRequest } = require('./client.cjs');
+const { connect, ClientError, Float64, Record, Vector, encodeValue, decodeValue, normalizeUrl, saveRequest, loadRequest, validatePrepared } = require('./client.cjs');
 const cloud = 'https://cloud.fastdb.org/v1/organizations/11111111-1111-4111-8111-111111111111/databases/22222222-2222-4222-8222-222222222222';
 const result = (value = 1n) => ({ columns: ['value'], rows: [[encodeValue(value)]], affected: '0' });
 const details = sequence => ({ id: 'local-test', sequence, serviceVersion: 1, capabilities: { readVersion: 2, atomicWrites: true, replayWindow: 64, exactSequenceCondition: true }, limits: { maxRequestBytes: 65_536 } });
@@ -55,7 +55,7 @@ test('query version 2 confirms writes; unknown versions preserve the exact recov
   } });
   try {
     assert.equal((await db.writeAtomic([{ sql: 'INSERT INTO data VALUES(1)' }])).sequence, 1);
-    version = '3';
+    version = '4';
     await assert.rejects(db.read([{ sql: 'SELECT 1' }]), error => error.code === 'FDB_PROTOCOL' && error.outcome === 'read-failed');
     const saved = db.prepareWrite([{ sql: 'INSERT INTO data VALUES(2)' }]);
     await assert.rejects(db.submit(saved), error => error.code === 'FDB_PROTOCOL' && error.outcome === 'unknown' && error.request === saved);
@@ -494,4 +494,58 @@ test('Cloud connections warm the database in the background; warm() reports the 
   await assert.rejects(connect({ url: 'http://127.0.0.1:4321', token: 'test-token', warm: true, fetch }), /Cloud database URLs/);
   await assert.rejects(connect({ url: cloud, token: 'test-token', warm: 'yes', fetch }), /boolean/);
   await Promise.all([db.close(), failing.close(), eager.close(), local.close()]);
+});
+
+test('Cloud query version 3: base64 bytes, 1 MiB bodies, saved writes record their version', async () => {
+  const sent = [];
+  const db = await connect({ url: cloud, token: 'test-token', deferInfo: false, warm: false, fetch: async (_url, options) => {
+    if (options.method === 'GET') return json({ id: 'cloud-test', sequence: 0 });
+    const q = JSON.parse(options.body);
+    sent.push({ header: options.headers['x-fastdb-query-version'], body: q, bytes: Buffer.byteLength(options.body) });
+    return Response.json({ requestId: q.requestId, sequence: q.readVersion ? 1 : q.afterSequence + 1, ...(q.readVersion ? { readVersion: 2 } : {}),
+      results: [{ columns: ['b', 'v'], rows: [[{ type: 'Binary', value: 'AAH/' }, { type: 'Vector', value: [1, 2, 3, 4] }]], affected: '0' }] },
+      { headers: { 'x-fastdb-query-version': sent.at(-1).header ?? '2' } });
+  } });
+  try {
+    const read = await db.read([{ sql: 'SELECT $b', params: { $b: Buffer.from([0, 1, 255]) } }]);
+    assert.equal(sent[0].header, '3');
+    assert.deepEqual(sent[0].body.statements[0].params.$b, { type: 'Binary', value: 'AAH/' });
+    assert.deepEqual([...read.results[0].rows[0][0]], [0, 1, 255], 'base64 rows decode');
+    assert.deepEqual([...read.results[0].rows[0][1].bytes], [1, 2, 3, 4], 'array rows still decode');
+    const big = Buffer.alloc(700_000, 7);
+    const saved = db.prepareWrite([{ sql: 'INSERT INTO t VALUES($b)', params: { $b: big } }]);
+    assert.deepEqual([saved.version, saved.queryVersion], [2, 3]);
+    assert.ok(Buffer.byteLength(saved.body) > 65_536 && Buffer.byteLength(saved.body) < 1_048_576);
+    await db.submit(saved);
+    assert.equal(sent.at(-1).header, '3');
+    assert.throws(() => db.prepareWrite([{ sql: 'INSERT INTO t VALUES($b)', params: { $b: Buffer.alloc(800_000) } }]), /exceeds 1 MiB/);
+    const legacy = { version: 1, url: saved.url, databaseId: saved.databaseId, body: JSON.stringify({ requestId: 'legacy-write', afterSequence: 0,
+      statements: [{ sql: 'INSERT INTO t VALUES($b)', params: { $b: { type: 'Binary', value: [1, 2] } } }] }) };
+    await db.submit(legacy);
+    assert.equal(sent.at(-1).header, undefined, 'a saved 2.8.0 request replays at version 2');
+    assert.throws(() => validatePrepared({ ...saved, queryVersion: 9 }), /invalid saved request/);
+  } finally { await db.close(); }
+});
+
+test('local services keep version 2: byte arrays and 64 KiB', async () => {
+  let header = 'unset', params;
+  const db = await connect({ url: 'http://localhost:4321', token: 'test-token', fetch: async (_url, options) => {
+    if (options.method === 'GET') return json(details(0));
+    header = options.headers['x-fastdb-query-version']; const q = JSON.parse(options.body); params = q.statements[0].params;
+    return json({ requestId: q.requestId, sequence: 1, readVersion: 2, results: [result()] });
+  } });
+  try {
+    await db.read([{ sql: 'SELECT $b', params: { $b: Buffer.from([9]) } }]);
+    assert.equal(header, undefined); assert.deepEqual(params.$b, { type: 'Binary', value: [9] });
+    assert.deepEqual(db.prepareWrite([{ sql: 'SELECT 1' }]).queryVersion, 2);
+    assert.throws(() => db.prepareWrite([{ sql: 'INSERT INTO t VALUES($b)', params: { $b: Buffer.alloc(40_000) } }]), /exceeds 64 KiB/);
+  } finally { await db.close(); }
+});
+
+test('base64 byte values must be canonical', () => {
+  assert.deepEqual([...decodeValue({ type: 'Binary', value: '' })], []);
+  assert.deepEqual([...decodeValue({ type: 'Binary', value: 'AQI=' })], [1, 2]);
+  for (const bad of ['AQI', 'AQJ=', 'A Q I=', 'AQI==', '****']) assert.throws(() => decodeValue({ type: 'Binary', value: bad }), /base64/);
+  assert.deepEqual(encodeValue(Buffer.from([1, 2]), 0, true), { type: 'Binary', value: 'AQI=' });
+  assert.deepEqual(encodeValue(Buffer.from([1, 2])), { type: 'Binary', value: [1, 2] });
 });

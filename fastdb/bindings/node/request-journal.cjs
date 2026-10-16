@@ -4,7 +4,7 @@ const { constants } = require('node:fs');
 const path = require('node:path');
 const { Buffer } = require('node:buffer');
 
-const MAX_JOURNAL = 139_264;
+const MAX_JOURNAL = 2_359_296;
 
 async function saveRequest(file, request, validate) {
   validate(request);

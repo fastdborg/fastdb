@@ -5,6 +5,8 @@ const { addAbortListener } = require('node:events');
 const { Float64, Record, Vector, encodeValue, decodeValue, plainObject, text } = require('./values.cjs');
 
 const MAX_REQUEST = 65_536;
+const MAX_CLOUD_REQUEST = 1_048_576;
+const CLOUD_QUERY_VERSION = 3;
 const MAX_RESPONSE = 524_288;
 const MAX_SEQUENCE = Number.MAX_SAFE_INTEGER - 1;
 const construction = Symbol('RemoteDatabase');
@@ -89,10 +91,11 @@ class RemoteDatabase {
     const afterSequence = options.afterSequence ?? this.#sequence;
     checkSequence(afterSequence);
     const workLimits = encodeWorkLimits(options.workLimits);
-    const body = JSON.stringify({ readVersion: 2, requestId: randomUUID(), afterSequence, statements: encodeStatements(statements), ...(workLimits === undefined ? {} : { workLimits }) });
-    checkBodySize(body);
+    const queryVersion = this.#queryVersion();
+    const body = JSON.stringify({ readVersion: 2, requestId: randomUUID(), afterSequence, statements: encodeStatements(statements, queryVersion), ...(workLimits === undefined ? {} : { workLimits }) });
+    checkBodySize(body, queryVersion);
     const request = JSON.parse(body);
-    const reply = await this.#request('/read', body, options, false);
+    const reply = await this.#request('/read', body, options, false, undefined, queryVersion);
     const result = confirmReply(reply, request, true);
     this.#sequence = Math.max(this.#sequence, result.sequence);
     this.#sequenceKnown = true;
@@ -112,9 +115,10 @@ class RemoteDatabase {
     const requestId = options.requestId ?? randomUUID();
     if (typeof requestId !== 'string' || !/^[A-Za-z0-9_-]{1,80}$/.test(requestId)) throw new TypeError('requestId requires 1..80 letters, digits, underscores or hyphens');
     const workLimits = encodeWorkLimits(options.workLimits);
-    const body = JSON.stringify({ requestId, afterSequence, ...(options.ifSequence === undefined ? {} : { ifSequence: options.ifSequence }), statements: encodeStatements(statements), ...(workLimits === undefined ? {} : { workLimits }) });
-    checkBodySize(body);
-    return Object.freeze({ version: 1, url: this.#url, databaseId: this.#id, body });
+    const queryVersion = this.#queryVersion();
+    const body = JSON.stringify({ requestId, afterSequence, ...(options.ifSequence === undefined ? {} : { ifSequence: options.ifSequence }), statements: encodeStatements(statements, queryVersion), ...(workLimits === undefined ? {} : { workLimits }) });
+    checkBodySize(body, queryVersion);
+    return Object.freeze({ version: 2, url: this.#url, databaseId: this.#id, queryVersion, body });
   }
   async submit(prepared, options = {}) {
     this.#assertOpen();
@@ -122,7 +126,7 @@ class RemoteDatabase {
     if (this.#capabilities.atomicWrites !== true || this.#capabilities.replayWindow !== 64 || (request.ifSequence !== undefined && this.#capabilities.exactSequenceCondition !== true)) throw new ClientError('FDB_UNSUPPORTED', 'Database does not support this write contract', 'not-sent', { request: prepared });
     if (prepared.url !== this.#url || prepared.databaseId !== this.#id) throw new ClientError('FDB_REQUEST_IDENTITY', 'Saved request belongs to another database', 'not-sent');
     try {
-      const reply = await this.#request('/query', prepared.body, options, true, prepared);
+      const reply = await this.#request('/query', prepared.body, options, true, prepared, preparedQueryVersion(prepared));
       const result = confirmReply(reply, request, false, prepared);
       this.#sequence = Math.max(this.#sequence, result.sequence);
       this.#sequenceKnown = true;
@@ -154,7 +158,8 @@ class RemoteDatabase {
   #assertOpen() {
     if (this.#closed) throw new ClientError('FDB_CLOSED', 'Database client is closed', 'not-sent');
   }
-  async #request(path, body, options, writing, prepared) {
+  #queryVersion() { return this.#cloud ? CLOUD_QUERY_VERSION : 2; }
+  async #request(path, body, options, writing, prepared, queryVersion = 2) {
     this.#assertOpen();
     const duration = timeout(options.timeoutMs ?? this.#timeout);
     if (options.signal !== undefined && !(options.signal instanceof AbortSignal)) throw new TypeError('signal must be an AbortSignal');
@@ -172,13 +177,14 @@ class RemoteDatabase {
       if (this.#transport) return await this.#transport(path, body, controller.signal, duration);
       const response = await this.#fetch(this.#url + path, {
         method: body === undefined ? 'GET' : 'POST',
-        headers: { authorization: `Bearer ${credential}`, accept: 'application/json', ...(body === undefined ? {} : { 'content-type': 'application/json' }), ...(this.#id === undefined ? {} : { 'x-fastdb-database-id': prepared?.databaseId ?? this.#id }) },
+        headers: { authorization: `Bearer ${credential}`, accept: 'application/json', ...(body === undefined ? {} : { 'content-type': 'application/json' }), ...(this.#id === undefined ? {} : { 'x-fastdb-database-id': prepared?.databaseId ?? this.#id }),
+          ...(queryVersion === CLOUD_QUERY_VERSION && (path === '/query' || path === '/read') ? { 'x-fastdb-query-version': String(queryVersion) } : {}) },
         ...(body === undefined ? {} : { body }),
         redirect: 'error', signal: controller.signal,
       });
       status = response.status;
-      const queryVersion = response.headers.get('x-fastdb-query-version');
-      if ((path === '/query' || path === '/read') && queryVersion !== null && queryVersion !== '2') {
+      const replyVersion = response.headers.get('x-fastdb-query-version');
+      if ((path === '/query' || path === '/read') && replyVersion !== null && replyVersion !== '2' && replyVersion !== String(queryVersion)) {
         await response.body?.cancel();
         throw new ClientError('FDB_PROTOCOL', 'Unsupported database query response version', writing ? 'unknown' : 'read-failed', { status, ...(prepared ? { request: prepared } : {}) });
       }
@@ -237,19 +243,22 @@ function normalizeUrl(input) {
   return url.origin + path;
 }
 
-function encodeStatements(statements) {
+function encodeStatements(statements, queryVersion = 2) {
   if (!Array.isArray(statements) || statements.length < 1 || statements.length > 32) throw new RangeError('request requires 1..32 statements');
   return statements.map(statement => {
     if (!plainObject(statement) || Object.keys(statement).some(key => !['sql', 'params'].includes(key)) || typeof statement.sql !== 'string' || !statement.sql.trim()) throw new TypeError('statement requires SQL and optional params');
     if (statement.params === undefined) return { sql: text(statement.sql) };
     if (!plainObject(statement.params)) throw new TypeError('params require an object');
-    return { sql: text(statement.sql), params: Object.fromEntries(Object.entries(statement.params).map(([key, value]) => [text(key), encodeValue(value)])) };
+    return { sql: text(statement.sql), params: Object.fromEntries(Object.entries(statement.params).map(([key, value]) => [text(key), encodeValue(value, 0, queryVersion === CLOUD_QUERY_VERSION)])) };
   });
 }
 
 function validatePrepared(prepared) {
-  if (!plainObject(prepared) || Object.keys(prepared).sort().join(',') !== 'body,databaseId,url,version' || prepared.version !== 1 || typeof prepared.databaseId !== 'string' || !prepared.databaseId || (prepared.url?.startsWith('file:') ? normalizeFileUrl(prepared.url) : normalizeUrl(prepared.url)) !== prepared.url || typeof prepared.body !== 'string') throw new TypeError('invalid saved request');
-  checkBodySize(prepared.body);
+  const fields = prepared?.version === 1 ? 'body,databaseId,url,version' : 'body,databaseId,queryVersion,url,version';
+  if (!plainObject(prepared) || Object.keys(prepared).sort().join(',') !== fields || ![1, 2].includes(prepared.version) ||
+      (prepared.version === 2 && ![2, CLOUD_QUERY_VERSION].includes(prepared.queryVersion)) || typeof prepared.databaseId !== 'string' || !prepared.databaseId ||
+      (prepared.url?.startsWith('file:') ? normalizeFileUrl(prepared.url) : normalizeUrl(prepared.url)) !== prepared.url || typeof prepared.body !== 'string') throw new TypeError('invalid saved request');
+  checkBodySize(prepared.body, preparedQueryVersion(prepared));
   const body = JSON.parse(prepared.body);
   if (!plainObject(body) || Object.keys(body).some(key => !['requestId', 'afterSequence', 'ifSequence', 'statements', 'workLimits'].includes(key)) || typeof body.requestId !== 'string' || !/^[A-Za-z0-9_-]{1,80}$/.test(body.requestId)) throw new TypeError('invalid saved request identity');
   encodeWorkLimits(body.workLimits);
@@ -321,7 +330,11 @@ function encodeWorkLimits(value) {
 }
 function checkSequence(value) { if (!sequence(value)) throw new RangeError('sequence requires a nonnegative safe integer below Number.MAX_SAFE_INTEGER'); }
 function timeout(value) { if (!Number.isInteger(value) || value < 1 || value > 120_000) throw new RangeError('timeoutMs must be 1..120000'); return value; }
-function checkBodySize(body) { if (Buffer.byteLength(body) > MAX_REQUEST) throw new RangeError('request exceeds 64 KiB'); }
+function checkBodySize(body, queryVersion = 2) {
+  if (queryVersion === CLOUD_QUERY_VERSION ? Buffer.byteLength(body) > MAX_CLOUD_REQUEST : Buffer.byteLength(body) > MAX_REQUEST)
+    throw new RangeError(queryVersion === CLOUD_QUERY_VERSION ? 'request exceeds 1 MiB' : 'request exceeds 64 KiB');
+}
+function preparedQueryVersion(prepared) { return prepared.version === 1 ? 2 : prepared.queryVersion; }
 function httpCode(status) { return status === 401 ? 'FDB_AUTH' : status === 403 ? 'FDB_FORBIDDEN' : status === 409 ? 'FDB_CONFLICT' : status === 429 || status === 413 ? 'FDB_LIMIT' : 'FDB_REMOTE'; }
 function redactMessage(message, token) { return (token ? message.replaceAll(token, '[redacted]') : message).slice(0, 2048); }
 function safeMessage(reply, token) { return redactMessage(typeof reply?.error === 'string' ? reply.error : typeof reply?.error?.message === 'string' ? reply.error.message : 'Database request was rejected', token); }
