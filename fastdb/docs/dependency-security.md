@@ -1,12 +1,13 @@
-# Dependency security review for 2.8.0
-Reviewed 2026-10-15 for the Linux x64 2.8.0 candidate. The exact lockfile
+# Dependency security review for 2.9.0
+Reviewed 2026-10-16 for the Linux x64 2.9.0 candidate. The exact lockfile
 scan covers 359 package/version identities against the RustSec advisory
-database at `edb58f5974b83eb8302332821cb6d389777aa351` (1,329 advisories; a
-fetch before the review found no newer revision) using the pinned
-`cargo-audit 0.22.2` binary. It found zero unresolved shipping findings; the
-retained lru informational exception below is unchanged. 2.8.0 adds no
-dependency: the lockfile differs from 2.7.0 only in the nine FastDB workspace
-package versions. 2.6.0 and 2.7.0 had the same result on the same database.
+database at `479c888ce4401313bca61ba4aba2d0f6244c4a09` (1,329 advisories,
+fetched just before the review; it adds only two unassigned drafts for crates
+FastDB does not use) using the pinned `cargo-audit 0.22.2` binary. It found zero
+unresolved shipping findings; the retained lru informational exception below is
+unchanged. 2.9.0 adds no dependency: the lockfile differs from 2.8.0 only in the
+nine FastDB workspace package versions. 2.6.0, 2.7.0 and 2.8.0 had the same
+result.
 
 The 2.5.4 review used the same database. That database added four rustls
 0.23.45 advisories (RUSTSEC-2026-0346,
