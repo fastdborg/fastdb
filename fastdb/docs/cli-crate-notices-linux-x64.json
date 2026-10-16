@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "target": "x86_64-unknown-linux-gnu",
-  "inventorySha256": "e21989f617e86b3a3653864bfa67ec4fad825324764eb2acff52dac7ddc51076",
+  "inventorySha256": "249db37d6d3929485f74aba898012437b64c1203d1f6f07d39e76485b9b7c633",
   "scope": "Checksummed crate archive notice candidates; not complete notices or linked-binary evidence",
   "packages": [
     {
@@ -1752,17 +1752,17 @@
     },
     {
       "name": "fastdb-cli",
-      "version": "2.8.0",
+      "version": "2.9.0",
       "status": "workspace_source_requires_separate_review"
     },
     {
       "name": "fastdb-service",
-      "version": "2.8.0",
+      "version": "2.9.0",
       "status": "workspace_source_requires_separate_review"
     },
     {
       "name": "fastdb",
-      "version": "2.8.0",
+      "version": "2.9.0",
       "status": "workspace_source_requires_separate_review"
     },
     {
@@ -1781,7 +1781,7 @@
     },
     {
       "name": "fastql-parser",
-      "version": "2.8.0",
+      "version": "2.9.0",
       "status": "workspace_source_requires_separate_review"
     },
     {

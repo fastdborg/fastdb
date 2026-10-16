@@ -41,6 +41,7 @@ UPGRADES = [
     Upgrade("v254", "2.5.4", "check-v251-upgrade.cjs", "2.6.0"),
     Upgrade("v260", "2.6.0", "check-v251-upgrade.cjs", "2.7.0"),
     Upgrade("v270", "2.7.0", "check-v251-upgrade.cjs", "2.8.0"),
+    Upgrade("v280", "2.8.0", "check-v251-upgrade.cjs", "2.9.0"),
 ]
 
 

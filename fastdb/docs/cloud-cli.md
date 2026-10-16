@@ -66,7 +66,7 @@ fastdb cloud db retry write.json
 ```
 
 `read` needs `read` scope; `query` needs `read` and `query`. Both parse up to 32
-SQL/FastQL statements in at most 64 KiB of encoded request data. The server's native
+SQL/FastQL statements in at most 1 MiB of encoded request data (64 KiB for journals saved by 2.8.0). The server's native
 read endpoint enforces read-only execution; the CLI does not infer safety from a
 SQL prefix. Read requests send `readVersion: 2`. Every read attempt executes a
 fresh snapshot, including a retry with the same correlation ID. `afterSequence`
@@ -77,8 +77,9 @@ their lower bound by at most 64 positions.
 
 Before submission, the CLI reads the database sequence, creates a fixed request ID,
 and atomically saves a new journal containing the endpoint, organization, database,
-operation, exact SQL statements and `afterSequence`. Query journals use version 2;
-read journals use version 3. Old read journals and version-1 query journals are
+operation, exact SQL statements and `afterSequence`. Since 2.9.0 query journals use
+version 4 and read journals version 5; both send `x-fastdb-query-version: 3`. Query
+journals version 2 and read journals version 3 from 2.8.0 replay without it. Old read journals and version-1 query journals are
 rejected before dispatch. It syncs the file and parent
 directory before sending the data request. Existing journals are never overwritten.
 The journal defaults to owner-only permissions; it **contains SQL**, which can
