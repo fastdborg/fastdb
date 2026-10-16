@@ -21,13 +21,14 @@ class UpgradeMatrixTests(unittest.TestCase):
             "2.6.0": ["v1", "v2", "v21", "v22", "v23", "v24", "v25", "v251", "v252", "v253", "v254"],
             "2.7.0": ["v1", "v2", "v21", "v22", "v23", "v24", "v25", "v251", "v252", "v253", "v254", "v260"],
             "2.8.0": ["v1", "v2", "v21", "v22", "v23", "v24", "v25", "v251", "v252", "v253", "v254", "v260", "v270"],
+            "2.9.0": ["v1", "v2", "v21", "v22", "v23", "v24", "v25", "v251", "v252", "v253", "v254", "v260", "v270", "v280"],
         }
         for version, labels in expected.items():
             self.assertEqual([u.label for u in matrix.applicable(version)], labels, version)
 
     def test_later_candidates_need_no_table_edit(self):
-        for version in ["2.8.1", "2.9.0", "2.10.0"]:
-            self.assertEqual(matrix.applicable(version), matrix.applicable("2.8.0"), version)
+        for version in ["2.9.1", "2.10.0", "2.11.0"]:
+            self.assertEqual(matrix.applicable(version), matrix.applicable("2.9.0"), version)
         self.assertTrue(matrix.at_least("2.10.0", "2.9.0"))
 
     def test_missing_or_mismatched_previous_packages_fail(self):

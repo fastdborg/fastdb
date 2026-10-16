@@ -77,7 +77,7 @@ function checkComponent(value, width) {
   if (width === 4 && !Number.isFinite(Math.fround(value))) throw new RangeError('vector component is outside the finite float32 range');
 }
 
-function encodeValue(value, depth = 0) {
+function encodeValue(value, depth = 0, base64 = false) {
   checkDepth(depth);
   const tagged = (type, value) => ({ type, value });
   if (value === null) return { type: 'Null' };
@@ -94,18 +94,30 @@ function encodeValue(value, depth = 0) {
     return encodeFloat(value);
   }
   if (value instanceof Record) return tagged('Record', { table: text(value.table), key: encodeValue(value.key) });
-  if (value instanceof Vector) return tagged('Vector', [...value.bytes]);
-  if (value instanceof Uint8Array) return tagged('Binary', [...value]);
+  if (value instanceof Vector) return tagged('Vector', base64 ? Buffer.from(value.bytes).toString('base64') : [...value.bytes]);
+  if (value instanceof Uint8Array) return tagged('Binary', base64 ? Buffer.from(value).toString('base64') : [...value]);
   if (Array.isArray(value)) {
     const entries = [];
     for (let i = 0; i < value.length; i++) {
       if (!Object.hasOwn(value, i)) throw new TypeError('array holes are not database values');
-      entries.push(encodeValue(value[i], depth + 1));
+      entries.push(encodeValue(value[i], depth + 1, base64));
     }
     return tagged('Array', entries);
   }
-  if (plainObject(value)) return tagged('Object', Object.fromEntries(Object.entries(value).map(([key, entry]) => [text(key), encodeValue(entry, depth + 1)])));
+  if (plainObject(value)) return tagged('Object', Object.fromEntries(Object.entries(value).map(([key, entry]) => [text(key), encodeValue(entry, depth + 1, base64)])));
   throw new TypeError('unsupported parameter value');
+}
+
+function byteArray(payload) {
+  if (!Array.isArray(payload) || payload.length > 524_289 || payload.some(n => !Number.isInteger(n) || n < 0 || n > 255)) throw new TypeError('invalid byte array');
+  return Buffer.from(payload);
+}
+
+function base64Bytes(payload) {
+  if (payload.length > 1_048_576 || !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(payload)) throw new TypeError('invalid base64 bytes');
+  const bytes = Buffer.from(payload, 'base64');
+  if (bytes.toString('base64') !== payload) throw new TypeError('invalid base64 bytes');
+  return bytes;
 }
 
 function encodeFloat(value) {
@@ -142,8 +154,7 @@ function decodeValue(value, depth = 0) {
       return new Float64(Buffer.from(payload, 'hex').readDoubleBE());
     }
     case 'Binary': case 'Vector': {
-      if (!Array.isArray(payload) || payload.length > 524_289 || payload.some(n => !Number.isInteger(n) || n < 0 || n > 255)) throw new TypeError('invalid byte array');
-      const bytes = Buffer.from(payload);
+      const bytes = typeof payload === 'string' ? base64Bytes(payload) : byteArray(payload);
       return value.type === 'Vector' ? new Vector(bytes) : bytes;
     }
     case 'Record': {

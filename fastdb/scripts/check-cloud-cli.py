@@ -20,6 +20,7 @@ sequence = 7
 requests = []
 mode = 'normal'
 query_attempts = []
+versions = []
 
 class Handler(http.server.BaseHTTPRequestHandler):
     def log_message(self, *_):
@@ -30,6 +31,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
         body = self.rfile.read(int(self.headers.get('content-length', 0)))
         value = json.loads(body) if body else None
         requests.append((self.command, self.path, value))
+        if self.path.endswith(('/read', '/query')):
+            versions.append(self.headers.get('x-fastdb-query-version'))
         status = 200
         result = {'id': database, 'sequence': sequence, 'url': 'https://untrusted.example/query'}
         if self.path not in ['/v1/whoami', '/v1/organizations'] and not self.path.startswith(base):
@@ -130,9 +133,10 @@ try:
         assert json.loads(result.stdout)['sequence']==7 and json.loads(result.stdout)['readVersion']==2
         assert journal.stat().st_mode&0o077==0 and key not in journal.read_text()
         assert json.loads(journal.read_text())['request']==body
+        assert json.loads(journal.read_text())['version']==5 and versions[-1]=='3', 'new read journals use query version 3'
         before=len(requests);run(['db','read',database,str(journal)],'SELECT 99;',success=False)
         assert len(requests)==before, 'existing journal must never be overwritten or submit new SQL'
-        for sql in ['', 'x'*(64*1024+1), 'SELECT 1;'*33]:
+        for sql in ['', 'x'*(1024*1024+1), 'SELECT 1;'*33]:
             before=len(requests);run(['db','read',database,str(directory/'invalid.json')],sql,success=False)
             assert len(requests)==before
         for operation in ['read','query']:
@@ -162,7 +166,11 @@ try:
         (directory/'old-read.json').write_text(json.dumps(legacy_read));before=len(requests)
         run(['db','retry',str(directory/'old-read.json')],success=False)
         assert len(requests)==before, 'old read replay journals must not silently rerun'
-        (directory/'huge.json').write_text('x'*(70*1024));before=len(requests)
+        current=json.loads((directory/'read.json').read_text());current['version']=3
+        (directory/'v280-read.json').write_text(json.dumps(current));os.chmod(directory/'v280-read.json',0o600);before=len(requests)
+        previous_mode=mode;mode='normal';run(['db','retry',str(directory/'v280-read.json')]);mode=previous_mode
+        assert len(requests)==before+1 and versions[-1] is None, 'a 2.8.0 read journal replays at query version 2'
+        (directory/'huge.json').write_text('x'*(2*1024*1024+5000));before=len(requests)
         run(['db','retry',str(directory/'huge.json')],success=False);assert len(requests)==before
     mode='intervening'
     run(['db','access',database], 'SELECT 1;\n.quit\n')

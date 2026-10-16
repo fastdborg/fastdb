@@ -8,13 +8,15 @@ export class Vector {
   static sparse32Entries(dimensions: number, entries: readonly (readonly [number, number])[]): Vector;
 }
 export type Value = null | boolean | bigint | number | string | Float64 | Record | Vector | Uint8Array | Value[] | { [key: string]: Value };
-export type PortableValue = { type: 'Null' } | { type: 'Boolean'; value: boolean } | { type: 'Integer' | 'Number' | 'String'; value: string } | { type: 'Binary' | 'Vector'; value: number[] } | { type: 'Record'; value: { table: string; key: { type: 'Integer' | 'String'; value: string } } } | { type: 'Array'; value: PortableValue[] } | { type: 'Object'; value: { [key: string]: PortableValue } };
+export type PortableValue = { type: 'Null' } | { type: 'Boolean'; value: boolean } | { type: 'Integer' | 'Number' | 'String'; value: string } | { type: 'Binary' | 'Vector'; value: number[] | string } | { type: 'Record'; value: { table: string; key: { type: 'Integer' | 'String'; value: string } } } | { type: 'Array'; value: PortableValue[] } | { type: 'Object'; value: { [key: string]: PortableValue } };
 export interface Statement { sql: string; params?: { [key: string]: Value }; }
 export interface RequestOptions { signal?: AbortSignal; timeoutMs?: number; }
 export interface WorkLimits { rowsRead?: number; rowMutations?: number; vmSteps?: number; }
 export interface ReadOptions extends RequestOptions { afterSequence?: number; workLimits?: WorkLimits; }
 export interface WriteOptions extends ReadOptions { requestId?: string; ifSequence?: number; }
-export interface PreparedWrite { readonly version: 1; readonly url: string; readonly databaseId: string; readonly body: string; }
+export type PreparedWrite =
+  | { readonly version: 1; readonly url: string; readonly databaseId: string; readonly body: string }
+  | { readonly version: 2; readonly url: string; readonly databaseId: string; readonly queryVersion: 2 | 3; readonly body: string };
 export interface QueryResult { columns: string[]; rows: Value[][]; affected: bigint; }
 export interface BatchResult { requestId: string; sequence: number; results: QueryResult[]; readVersion?: 2; executionWork?: unknown; }
 export interface Capabilities { provenance: 'negotiated' | 'documented'; [key: string]: unknown; }

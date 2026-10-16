@@ -8,6 +8,8 @@ mod requests;
 
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 const LIMIT: usize = 64 * 1024;
+const QUERY_LIMIT: usize = 1024 * 1024;
+const QUERY_VERSION: u8 = 3;
 const HELP: &str = "fastdb cloud whoami\nfastdb cloud organizations\nfastdb cloud --organization ORG db create NAME\nfastdb cloud --organization ORG db list\nfastdb cloud --organization ORG db show UUID\nfastdb cloud --organization ORG db delete UUID\nfastdb cloud --organization ORG db access UUID\nfastdb cloud --organization ORG db warm UUID\nfastdb cloud --organization ORG db tokens UUID\nfastdb cloud --organization ORG db token-create UUID ISSUANCE_UUID NAME read|write EXPIRES_AT_MS\nfastdb cloud --organization ORG db token-revoke UUID TOKEN_UUID\nfastdb cloud --organization ORG db read UUID JOURNAL < query.sql\nfastdb cloud --organization ORG db query UUID JOURNAL < query.sql\nfastdb cloud --organization ORG db retry JOURNAL\n\nSet FASTDB_API_KEY to an organization key or database JWT (read/query/show/access/warm only). FASTDB_ORGANIZATION_ID can supply ORG.\nFASTDB_CLOUD_URL defaults to https://cloud.fastdb.org. JSON output goes to stdout.\nAccess accepts SQL/FastQL ending in semicolons; batches commit atomically.\n.quit exits, .clear discards input, .retry retries an uncertain request in this session.\nRead and warm need read scope; query/access need read and query. Management needs manage.\nOne-shot journals retain SQL and request identity. Read retries run a fresh snapshot; queries replay their durable result.";
 
 struct Cloud {
@@ -81,6 +83,23 @@ impl Cloud {
         path: &str,
         body: Option<&Value>,
     ) -> std::result::Result<Value, Failure> {
+        self.send(method, path, body, 2)
+    }
+    fn query_request(
+        &self,
+        path: &str,
+        body: &Value,
+        query_version: u8,
+    ) -> std::result::Result<Value, Failure> {
+        self.send(Method::POST, path, Some(body), query_version)
+    }
+    fn send(
+        &self,
+        method: Method,
+        path: &str,
+        body: Option<&Value>,
+        query_version: u8,
+    ) -> std::result::Result<Value, Failure> {
         let failure = |message: &str, uncertain| Failure {
             message: message.into(),
             uncertain,
@@ -91,11 +110,26 @@ impl Cloud {
             .join(path)
             .map_err(|_| failure("Invalid API path", false))?;
         let mut request = self.http.request(method, url).bearer_auth(&self.key);
+        if query_version == QUERY_VERSION {
+            request = request.header("x-fastdb-query-version", QUERY_VERSION.to_string());
+        }
         if let Some(body) = body {
             let encoded =
                 serde_json::to_vec(body).map_err(|_| failure("Invalid query body", false))?;
-            if encoded.len() > LIMIT {
-                return Err(failure("Request exceeds 64 KiB", false));
+            let limit = if query_version == QUERY_VERSION {
+                QUERY_LIMIT
+            } else {
+                LIMIT
+            };
+            if encoded.len() > limit {
+                return Err(failure(
+                    if limit == QUERY_LIMIT {
+                        "Request exceeds 1 MiB"
+                    } else {
+                        "Request exceeds 64 KiB"
+                    },
+                    false,
+                ));
             }
             request = request
                 .header("content-type", "application/json")
@@ -220,7 +254,7 @@ impl Cloud {
                     "...> "
                 },
                 &mut prompt,
-                LIMIT,
+                QUERY_LIMIT,
             )? {
                 crate::input::Read::Line(bytes) => bytes,
                 crate::input::Read::Interrupted => {
@@ -261,8 +295,8 @@ impl Cloud {
                     failed = true;
                     continue;
                 }
-                if buffer.len() + line.len() > LIMIT {
-                    return Err("Cloud input exceeds 64 KiB".into());
+                if buffer.len() + line.len() > QUERY_LIMIT {
+                    return Err("Cloud input exceeds 1 MiB".into());
                 }
                 buffer.push_str(&line);
                 if !eof && !fastql_parser::script_complete(&buffer).unwrap_or(true) {
@@ -293,7 +327,7 @@ impl Cloud {
                 continue;
             };
             let response = self
-                .request(Method::POST, &(path.clone() + "/query"), Some(request))
+                .query_request(&(path.clone() + "/query"), request, QUERY_VERSION)
                 .and_then(|reply| {
                     if requests::confirmed(request, &reply) {
                         Ok(reply)

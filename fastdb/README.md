@@ -1,11 +1,14 @@
 # FastDB embedded database
 
-FastDB and FastQL [2.8.0 are released for Linux x64](docs/release-2.8.0.md),
+FastDB and FastQL [2.9.0 are released for Linux x64](docs/release-2.9.0.md),
 with native Rust, Node.js/TypeScript, Python, PHP, Swift, C# and Go clients.
-See the [completed checklist](docs/v2.8.0-tasks.md),
-[verified download](docs/release-2.8.0-download.json),
+See the [completed checklist](docs/v2.9.0-tasks.md),
+[verified download](docs/release-2.9.0-download.json),
 [language contracts](docs/v2.2-language.md) and [engine provenance](UPSTREAM.md).
 
+2.9.0 lets the Node SDK and CLI use Cloud query version 3: Binary and Vector values
+travel as base64 and requests may be up to 1 MiB. It also keeps keyword column names
+unquoted when a subquery reads a document table.
 2.8.0 joins collections with relational tables that store record IDs as text
 (`ON u.id = p.user_id` with `posts.user_id = 'users:tan'`) and resolves
 unqualified names in collection joins; see the

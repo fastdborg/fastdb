@@ -377,12 +377,17 @@ and embedded adapter are implemented in development source. They are not release
 The hosted common fixture and production Studio browser workflow pass. Existing
 native imports are unchanged. Final release-candidate packaging remains pending.
 
-Cloud query responses advertise `x-fastdb-query-version: 2`. This version covers
-tagged Record keys and typed query errors; resource URLs remain `/v1`, and
-`readVersion: 2` separately defines fresh-read execution. The SDK accepts version
-2 and historical responses without this header. An unknown advertised version
-fails with `FDB_PROTOCOL`; a dispatched write remains `unknown` and retains its
-exact saved request for recovery. Historical enum-key receipts still decode.
+Since 2.9.0 the SDK asks Cloud for query version 3 (`x-fastdb-query-version: 3`
+on `/query` and `/read`): Binary and Vector values travel as canonical base64 and
+request bodies may be up to 1 MiB. Local services and embedded databases keep
+version 2 (byte arrays, 64 KiB). Version 2 covers tagged Record keys and typed
+query errors; resource URLs remain `/v1`, and `readVersion: 2` separately defines
+fresh-read execution. The SDK accepts the version it asked for, version 2, and
+historical responses without the header, and decodes both byte forms. An unknown
+advertised version fails with `FDB_PROTOCOL`; a dispatched write remains `unknown`
+and retains its exact saved request for recovery. Saved writes are version 2 and
+record their query version; version 1 saved writes from 2.8.0 replay at version 2.
+Historical enum-key receipts still decode.
 
 ```js
 const { connect, Float64, Record, saveRequest, loadRequest } = require('@fastdb/node/client');
