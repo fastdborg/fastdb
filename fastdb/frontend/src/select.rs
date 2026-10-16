@@ -3027,6 +3027,13 @@ impl Scope {
         Ok(())
     }
 }
+fn result_label(expr: &Expr) -> Result<String> {
+    match expr {
+        Expr::Id(name) | Expr::Name(name) => Ok(name.as_str().to_owned()),
+        Expr::Qualified(qualifier, column) => Ok(format!("{}.{}", qualifier.as_str(), column.as_str())),
+        _ => public_expression_name(expr),
+    }
+}
 fn public_expression_name(expr: &Expr) -> Result<String> {
     use fastql_parser::Kind;
     let sql = expr.to_string();
@@ -5009,7 +5016,7 @@ impl Connection {
         let mut rewritten = false;
         for column in &mut columns {
             if let ResultColumn::Expr(expr, alias) = column {
-                let label = public_expression_name(expr)?;
+                let label = result_label(expr)?;
                 if crate::mutation_result::rewrite_expression(expr, &before_name, &after_name)? {
                     if alias.as_ref().is_none_or(|alias| !alias.is_explicit()) {
                         *alias = Some(As::As(Name::exact(label)));
@@ -6990,9 +6997,9 @@ impl Connection {
                                     .find(|(name, _)| name.eq_ignore_ascii_case(column.as_str()))
                             })
                             .map(|(name, _)| Ok(name.clone()))
-                            .unwrap_or_else(|| public_expression_name(&expr))?
+                            .unwrap_or_else(|| result_label(&expr))?
                     } else {
-                        public_expression_name(&expr)?
+                        result_label(&expr)?
                     };
                     let is_inverse = matches!(&expr, Expr::FunctionCall {name,..} if name.as_str()=="__fastdb_relation_fetch");
                     let is_path = matches!(&expr, Expr::FunctionCall {name,..} if name.as_str()=="__fastdb_h_doc_project");

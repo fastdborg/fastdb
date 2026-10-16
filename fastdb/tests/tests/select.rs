@@ -2586,3 +2586,23 @@ fn collection_not_indexed_bypasses_managed_candidates() {
         )
         .is_err());
 }
+
+#[test]
+fn keyword_columns_keep_their_names_when_a_document_table_appears_in_a_subquery() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    query(&c, "CREATE TABLE settings");
+    query(&c, "CREATE TABLE organizations(id TEXT, plan TEXT, key TEXT, name TEXT)");
+    query(&c, "INSERT INTO organizations VALUES ('o1','trial','k1','Acme')");
+    query(&c, "INSERT INTO settings {id: settings:t1, note: 'x'}");
+    let result = query(
+        &c,
+        "SELECT plan, key, name, o.plan FROM organizations o WHERE id='o1' AND EXISTS (SELECT 1 FROM settings t WHERE t.id=settings:t1)",
+    );
+    assert_eq!(&result.columns[..3], &["plan", "key", "name"]);
+    assert!(result.columns.iter().all(|column| !column.contains('"')), "{:?}", result.columns);
+    assert_eq!(result.rows[0][..3], [Value::String("trial".into()), Value::String("k1".into()), Value::String("Acme".into())]);
+    let returned = query(&c, "INSERT INTO settings {id: settings:t2, plan: 'basic'} RETURNING plan");
+    assert_eq!(returned.columns, vec!["plan"]);
+    assert_eq!(returned.rows, vec![vec![Value::String("basic".into())]]);
+}
