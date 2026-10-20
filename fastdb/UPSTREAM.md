@@ -1,15 +1,28 @@
 # Engine provenance
 
 - Repository: https://github.com/tursodatabase/turso (remote `upstream`).
-- Baseline: release `v0.8.1`, full commit `8549c16595d2faf1bdd6ee24aee0be8bfabb3d4a`.
-- Previous base: `v0.7.2`, commit `046e9cbf67d22491e8ecc941ec2891b02a9f3cad`.
-- Upgrade behavior and validation: [integration notes](docs/turso-0.8.1.md),
-  [task checklist](docs/turso-0.8.1-tasks.md), [core exception review](docs/core-exceptions.md).
+- Baseline: release `v0.8.3`, full commit `607bff9fd0e547a25a97b3bf06e83bcc5d99d53c`.
+- Previous base: `v0.8.1`, commit `8549c16595d2faf1bdd6ee24aee0be8bfabb3d4a`; before that `v0.7.2`, commit `046e9cbf67d22491e8ecc941ec2891b02a9f3cad`.
+- Upgrade behavior and validation: [0.8.3 notes](docs/turso-0.8.3.md) and
+  [checklist](docs/turso-0.8.3-tasks.md); the 0.8.1 [integration notes](docs/turso-0.8.1.md)
+  and [task checklist](docs/turso-0.8.1-tasks.md) remain the record of the larger
+  0.7.2 upgrade; [core exception review](docs/core-exceptions.md).
 - Follow-up override audit: [release and current-main comparison](docs/core-exception-audit-2026-09-30.md).
 - FastDB fork: `git@github.com:fastdborg/fastdb.git` (remote `origin`). Upstream ancestry is preserved; inspect current refs rather than relying on historical branch names.
 - Toolchain: upstream Rust 1.88; locally tested with 1.88.0 on Linux x86_64.
 - Engine dependency: in-workspace `turso_core` with default features plus `conn_raw_api` for engine WAL hooks and `fts` for V2 full-text search. V2 opens opt into index methods; managed search owns the public surface.
 - This release exposes `Connection::prepare`, `prepare_stmt`, and blocking statement execution. FastDB retains its separate-frontend boundary and the explicitly registered core exceptions.
+
+Upstream check-runs inspected for the exact 0.8.3 release commit `607bff9fd`:
+[Release](https://github.com/tursodatabase/turso/actions/runs/38264553029),
+[Publish Crates](https://github.com/tursodatabase/turso/actions/runs/38264553018),
+[Run long fuzz tests and stress test](https://github.com/tursodatabase/turso/actions/runs/38264552904),
+[C compat Tests](https://github.com/tursodatabase/turso/actions/runs/38264552996),
+[Python](https://github.com/tursodatabase/turso/actions/runs/38264552938),
+[Dotnet Tests](https://github.com/tursodatabase/turso/actions/runs/38264552961) and
+[Java Tests](https://github.com/tursodatabase/turso/actions/runs/38264552953)
+succeeded. Like the 0.8.1 runs below, they cover upstream packaging and suites
+only, not the combined fork.
 
 Upstream check-runs inspected for the exact 0.8.1 release commit:
 [Linux x64 Node 24 database bindings](https://github.com/tursodatabase/turso/actions/runs/36564600099/job/109396698178),
@@ -27,7 +40,7 @@ Local integration changes:
 
 The sections below preserve the original exception approvals and release
 history. Their old version/dependency statements describe those releases.
-For the current tree, the 0.8.1 exception table and upgrade checklist linked
+For the current tree, the 0.8.3 sync decisions (all exceptions retained), the 0.8.1 exception table and upgrade checklist linked
 above are authoritative: the former FTS cache and first-FULL patches are
 retired, Tantivy is 0.26.2, and the approved backing-cursor fix is active.
 

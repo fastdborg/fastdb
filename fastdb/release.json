@@ -1,7 +1,7 @@
 {
   "version": "2.9.0",
   "status": "development",
-  "engineBase": "8549c16595d2faf1bdd6ee24aee0be8bfabb3d4a",
+  "engineBase": "607bff9fd0e547a25a97b3bf06e83bcc5d99d53c",
   "clients": [
     "rust",
     "node",
