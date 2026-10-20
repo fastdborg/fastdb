@@ -3078,6 +3078,93 @@ fn test_blocking_truncate_zeros_log_when_commit_races_acquire_lock() {
     );
 }
 
+/// Regression for https://github.com/tursodatabase/turso/issues/8076.
+///
+/// With `experimental_mvcc_passive_checkpoint` enabled, an explicit TRUNCATE checkpoint
+/// collects rows without the blocking checkpoint lock and writers never take it, so another
+/// connection can commit after the checkpoint snapshot. That commit is not in the B-tree
+/// yet, so the checkpoint must keep it in the logical log instead of clearing the whole
+/// file.
+#[test]
+fn test_passive_truncate_keeps_log_frames_committed_after_snapshot() {
+    let mut db = MvccTestDbNoConn::new_with_random_db_passive();
+    let conn = db.connect();
+    conn.execute("PRAGMA mvcc_checkpoint_threshold = -1")
+        .unwrap();
+    conn.execute("CREATE TABLE t(id INTEGER PRIMARY KEY, v TEXT)")
+        .unwrap();
+    conn.execute("INSERT INTO t VALUES (1, 'collected')")
+        .unwrap();
+
+    let mvcc_store = db.get_mvcc_store();
+    let pager = conn.pager.load().clone();
+    let mut checkpoint_sm = CheckpointStateMachine::new(
+        pager.clone(),
+        mvcc_store.clone(),
+        conn.clone(),
+        true,
+        conn.get_sync_mode(),
+        crate::MAIN_DB_ID,
+        CheckpointMode::Truncate {
+            upper_bound_inclusive: None,
+        },
+    );
+
+    while checkpoint_sm.state_for_test() != CheckpointState::BeginPagerTxn {
+        match checkpoint_sm.step(&()).unwrap() {
+            TransitionResult::Io(io) => io.wait(pager.io.as_ref()).unwrap(),
+            TransitionResult::Continue => {}
+            TransitionResult::Done(_) => panic!("checkpoint finished before collecting rows"),
+        }
+    }
+
+    let sibling = db.connect();
+    sibling
+        .execute("INSERT INTO t VALUES (2, 'after-snapshot')")
+        .unwrap();
+
+    let mut finished = false;
+    for _ in 0..50_000 {
+        match checkpoint_sm.step(&()).unwrap() {
+            TransitionResult::Io(io) => io.wait(pager.io.as_ref()).unwrap(),
+            TransitionResult::Continue => {}
+            TransitionResult::Done(_) => {
+                finished = true;
+                break;
+            }
+        }
+    }
+    assert!(
+        finished,
+        "TRUNCATE checkpoint must complete after the sibling commit"
+    );
+    assert!(
+        mvcc_store.get_logical_log_file().size().unwrap() > 0,
+        "logical log must keep the commit that landed after the checkpoint snapshot"
+    );
+
+    let rows = get_rows(&sibling, "SELECT id FROM t ORDER BY id");
+    assert_eq!(rows.len(), 2, "both rows must be visible before restart");
+    assert_eq!(rows[0][0].as_int().unwrap(), 1);
+    assert_eq!(rows[1][0].as_int().unwrap(), 2);
+
+    drop(sibling);
+    drop(conn);
+    db.restart();
+    let conn = db.connect();
+    let rows = get_rows(&conn, "SELECT id, v FROM t ORDER BY id");
+    assert_eq!(
+        rows.len(),
+        2,
+        "commit that landed after the TRUNCATE snapshot must survive reopen"
+    );
+    assert_eq!(rows[0][0].as_int().unwrap(), 1);
+    assert_eq!(rows[0][1].to_string(), "collected");
+    assert_eq!(rows[1][0].as_int().unwrap(), 2);
+    assert_eq!(rows[1][1].to_string(), "after-snapshot");
+    assert_integrity_ok(&conn);
+}
+
 /// What this test checks: Checkpoint accepts sqlite_schema index-row updates for already-checkpointed indexes
 /// (e.g. column rename), without requiring create/destroy special writes.
 /// Why this matters: RENAME COLUMN on indexed tables rewrites sqlite_schema index SQL text while preserving rootpage.
@@ -7644,6 +7731,38 @@ fn test_drop_unused_row_versions_prunes_unreferenced_finalized_tx_states() {
         mvcc_store.finalized_tx_states.len(),
         baseline,
         "GC scan should prune finalized tx cache entries with no remaining TxID references"
+    );
+}
+
+#[test]
+fn test_gc_keeps_finalized_tx_state_of_tx_still_in_txs() {
+    let db = MvccTestDbNoConn::new_with_random_db();
+    let conn = db.connect();
+    let mvcc_store = db.get_mvcc_store();
+    conn.execute("CREATE TABLE t(id INTEGER PRIMARY KEY, v INTEGER)")
+        .unwrap();
+
+    conn.execute("BEGIN CONCURRENT").unwrap();
+    conn.execute("INSERT INTO t VALUES (1, 1)").unwrap();
+    let tx_id = conn.get_mv_tx_id().unwrap();
+    conn.set_yield_injector(Some(FixedYieldInjector::new([
+        CommitYieldPoint::BeforeFinishCommittedTx.point(),
+    ])));
+    let mut commit = conn.prepare("COMMIT").unwrap();
+    assert!(matches!(commit.step().unwrap(), StepResult::Yield));
+
+    let commit_ts = match mvcc_store.txs.get(&tx_id).unwrap().value().state.load() {
+        TransactionState::Committed(ts) => ts,
+        other => panic!("writer should be committed, got {other:?}"),
+    };
+    mvcc_store
+        .insert_finalized_tx_state(tx_id, commit_ts)
+        .unwrap();
+    mvcc_store.drop_unused_row_versions();
+
+    assert!(
+        lookup_finalized_tx_state(&mvcc_store.finalized_tx_states, tx_id).is_some(),
+        "GC removed the finalized state of a writer that is still in txs"
     );
 }
 
@@ -21021,6 +21140,69 @@ fn test_nextval_no_inner_tx_retry_on_concurrent_mvcc() {
         b_retries, 0,
         "B's inner tx retried — same canary as A. See PR #7137."
     );
+}
+
+#[test]
+fn test_nextval_inner_tx_retry_keeps_outer_concurrent_tx_committable() {
+    let db = MvccTestDbNoConn::new_with_random_db();
+    {
+        let setup = db.connect();
+        setup.execute("CREATE SEQUENCE s START WITH 1").unwrap();
+        setup.execute("CREATE TABLE t(x)").unwrap();
+        setup.execute("CREATE TABLE u(x)").unwrap();
+        setup.execute("SELECT nextval('s')").unwrap();
+        setup.close().unwrap();
+    }
+
+    let conn_a = db.connect();
+    let conn_b = db.connect();
+    conn_a.reset_sequence_inner_retries();
+
+    conn_a.execute("BEGIN CONCURRENT").unwrap();
+    conn_a.execute("INSERT INTO t VALUES (1)").unwrap();
+
+    let injector = FixedYieldInjector::new([CommitYieldPoint::CommitValidation.point()]);
+    conn_b.set_yield_injector(Some(injector.clone()));
+    let mut insert_b = conn_b.prepare("INSERT INTO u VALUES (1)").unwrap();
+    loop {
+        match insert_b.step().unwrap() {
+            StepResult::IO | StepResult::Yield => {
+                if injector.is_empty() {
+                    break;
+                }
+                conn_b.pager.load().io.step().unwrap();
+            }
+            other => panic!("B's insert should yield inside its commit, got {other:?}"),
+        }
+    }
+
+    let mut next_a = conn_a.prepare("SELECT nextval('s')").unwrap();
+    let mut seek_injector = FixedYieldInjector::new([CursorYieldPoint::SeekStart.point()]);
+    conn_a.set_yield_injector(Some(seek_injector.clone()));
+    while conn_a.sequence_inner_retries() == 0 {
+        if seek_injector.is_empty() {
+            seek_injector = FixedYieldInjector::new([CursorYieldPoint::SeekStart.point()]);
+            conn_a.set_yield_injector(None);
+            conn_a.set_yield_injector(Some(seek_injector.clone()));
+        }
+        match next_a.step().unwrap() {
+            StepResult::IO | StepResult::Yield => conn_a.pager.load().io.step().unwrap(),
+            other => panic!("A's nextval should retry its inner tx while B commits, got {other:?}"),
+        }
+    }
+    conn_a.set_yield_injector(None);
+
+    conn_b.set_yield_injector(None);
+    insert_b.run_collect_rows().unwrap();
+    drop(insert_b);
+
+    next_a.run_collect_rows().unwrap();
+    drop(next_a);
+    conn_a.execute("COMMIT").unwrap();
+
+    let reader = db.connect();
+    let rows = get_rows(&reader, "SELECT x FROM t");
+    assert_eq!(rows, vec![vec![Value::from_i64(1)]]);
 }
 
 #[test]

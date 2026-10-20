@@ -7,7 +7,7 @@
     "build"
   ],
   "scope": "Cargo dependency declarations; includes build tools, excludes dev dependencies; not proof of linked code or complete notices",
-  "lockfileSha256": "64a379d75ffcb98667c9422172193d5d825a2f0eb4653d5979a98a0078081630",
+  "lockfileSha256": "0b9b2b4b75070342867d0809048e72137929fb2b319521b287da5f13d16480c7",
   "packages": [
     {
       "name": "aead",
@@ -1226,22 +1226,22 @@
     },
     {
       "name": "turso_core",
-      "version": "0.8.1",
+      "version": "0.8.3",
       "licenseExpression": "MIT"
     },
     {
       "name": "turso_ext",
-      "version": "0.8.1",
+      "version": "0.8.3",
       "licenseExpression": "MIT"
     },
     {
       "name": "turso_macros",
-      "version": "0.8.1",
+      "version": "0.8.3",
       "licenseExpression": "MIT"
     },
     {
       "name": "turso_parser",
-      "version": "0.8.1",
+      "version": "0.8.3",
       "licenseExpression": "MIT"
     },
     {

@@ -43,6 +43,30 @@ The regression is `mvcc_schema_writes_do_not_consume_customer_mutation_budgets`
 in `schema_meter.rs`; final milestone validation is recorded in the follow-up
 audit.
 
+## Upstream sync: Turso 0.8.3 (2026-10-20)
+
+Candidate upstream commit: `607bff9fd0e547a25a97b3bf06e83bcc5d99d53c` (tag `v0.8.3`).
+The merge had no conflicts. Upstream changed seven files that FastDB also
+changes (`Cargo.toml`, `Cargo.lock`, `core/connection.rs`,
+`core/translate/emitter/update.rs`, `core/translate/sequence.rs`,
+`core/vdbe/execute.rs`, `core/vdbe/mod.rs`), always in different places from
+the local patches. 0.8.3 replaces no exception, so every patch stays. Notes and
+evidence: [integration notes](turso-0.8.3.md), [checklist](turso-0.8.3-tasks.md).
+
+| Existing exception | 0.8.3 decision | Evidence |
+|---|---|---|
+| Trigger interruption | Keep | `op_program` in 0.8.3 still joins `Interrupt` with `Busy`. Native trigger suite: 98 passed. |
+| Scalar read errors | Keep | The only upstream `execute.rs` change is in `op_journal_mode_inner`. Native external API suite: 14 passed. |
+| Checkpoint WAL barrier companion | Keep | No upstream change under `core/storage/`. `checkpoint_barrier` 5 and `checkpoint_crash_atomicity` 2 passed; first FULL commit 1 passed. |
+| Named-savepoint cancellation recovery | Keep | Upstream adds `end_abandoned_mvcc_commit` near, but not in, the savepoint code. Statement lifecycle 46 and savepoint filter 12 passed. |
+| FTS backing integrity / root reclamation | Keep | No upstream change under `core/index_method/`. Native integrity suite: 36 passed. |
+| FTS savepoint cursor pins | Keep | Same files unchanged. Native index-method suite: 131 passed. |
+| FTS analyzer inspection | Keep | `fts_analysis_hook` 3 and `fulltext` 8 passed. |
+| Execution counters and budgets | Keep, checked | Upstream adds compare opcodes and an `is_called` column read to the AUTOINCREMENT explicit-ID path and ends abandoned MVCC commits fully. New `turso_083` regression: an explicit-ID insert is still one customer mutation in WAL and MVCC modes. All metering suites pass with unchanged expectations (`profile` 4, `execution_meter` 14, `mutation_meter` 6, `schema_meter` 8, `index_method_meter` 4, nine `metered_*` suites 44). |
+
+Not taken: the whole-table DELETE fast path (`58f350a90`) is not in 0.8.3. The
+hazard recorded in the 2026-09-30 audit still applies to the next sync.
+
 ## Upstream sync: Turso 0.8.1 (2026-09-30)
 
 Candidate upstream commit: `8549c16595d2faf1bdd6ee24aee0be8bfabb3d4a`.
