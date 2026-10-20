@@ -101,6 +101,24 @@ class ABI(unittest.TestCase):
         ]:
             execute(sql)
         self.assertEqual(integers("SELECT last_insert_rowid()"), [[1]])
+        # A slow host can deliver the interrupt before the first insert. Each such
+        # attempt must still cancel cleanly; retry with a longer delay until one
+        # interrupts a writer that has inserted rows.
+        for delay in [0.05, 0.1, 0.2, 0.4, 0.8, 1.6]:
+            self.interrupt_plain_write(delay)
+            self.assertEqual(integers("SELECT n FROM sink"), [])
+            self.assertEqual(integers("SELECT n FROM prior"), [[99]])
+            # Savepoint rollback retains this value, proving native inserts happened.
+            if integers("SELECT last_insert_rowid()")[0][0] > 1:
+                break
+        else:
+            self.fail("Cancellation must interrupt an in-flight native writer")
+        execute("INSERT INTO sink VALUES(7)")
+        self.assertEqual(execute(finish)["transaction"], {"before": "active", "after": "autocommit"})
+        self.assertEqual(integers("SELECT n FROM prior"), [[99]])
+        self.assertEqual(integers("SELECT n FROM sink"), [[7]])
+
+    def interrupt_plain_write(self, delay):
         results = []
         failures = []
         started = threading.Event()
@@ -108,9 +126,11 @@ class ABI(unittest.TestCase):
         def write():
             try:
                 started.set()
+                begin = time.monotonic()
                 # Bound a missed interrupt; completing this workload is not a pass.
-                results.append(call(self.handle,
-                    "INSERT INTO sink SELECT a.n FROM nums a,nums b,nums c,nums d,nums e,nums f,nums g,nums h,nums i", 3000))
+                response = call(self.handle,
+                    "INSERT INTO sink SELECT a.n FROM nums a,nums b,nums c,nums d,nums e,nums f,nums g,nums h,nums i", 3000)
+                results.append((response, time.monotonic() - begin))
             except BaseException as error:
                 failures.append(error)
 
@@ -118,25 +138,21 @@ class ABI(unittest.TestCase):
         active.start()
         try:
             self.assertTrue(started.wait(1))
-            time.sleep(0.05)
+            time.sleep(delay)
             self.assertTrue(active.is_alive(), "Write completed before interruption")
-            interrupted = receive(lib.fdb_interrupt(self.handle))
+            # The engine ignores an interrupt that arrives before its statement
+            # starts, so repeat it until the writer returns.
+            while active.is_alive():
+                self.assertEqual(receive(lib.fdb_interrupt(self.handle))["execution"], {"result": True})
+                active.join(0.01)
         finally:
             active.join(5)
         self.assertFalse(active.is_alive())
         self.assertEqual(failures, [])
-        self.assertEqual(interrupted["execution"], {"result": True})
-        self.assertEqual(results[0]["execution"]["error"]["code"], "FDB_CANCELLED")
-        self.assertEqual(results[0]["transaction"], {"before": "active", "after": "active"})
-        # Savepoint rollback retains this value, proving native inserts happened.
-        self.assertGreater(integers("SELECT last_insert_rowid()")[0][0], 1,
-                           "Cancellation must interrupt an in-flight native writer")
-        self.assertEqual(integers("SELECT n FROM sink"), [])
-        self.assertEqual(integers("SELECT n FROM prior"), [[99]])
-        execute("INSERT INTO sink VALUES(7)")
-        self.assertEqual(execute(finish)["transaction"], {"before": "active", "after": "autocommit"})
-        self.assertEqual(integers("SELECT n FROM prior"), [[99]])
-        self.assertEqual(integers("SELECT n FROM sink"), [[7]])
+        response, elapsed = results[0]
+        self.assertEqual(response["execution"]["error"]["code"], "FDB_CANCELLED")
+        self.assertLess(elapsed, 3, "The write reached its deadline instead of being interrupted")
+        self.assertEqual(response["transaction"], {"before": "active", "after": "active"})
 
     def test_cancelled_plain_write_preserves_commit(self):
         self.check_cancelled_plain_write("BEGIN", "COMMIT")
