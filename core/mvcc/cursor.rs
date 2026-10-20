@@ -15,7 +15,7 @@ use crate::sync::Arc;
 use crate::translate::plan::IterationDirection;
 use crate::types::{
     compare_immutable, IOCompletions, IOResult, ImmutableRecord, IndexInfo, SeekKey, SeekOp,
-    SeekResult, Value,
+    SeekResult, Value, ValueRef,
 };
 use crate::vdbe::Register;
 use crate::{return_if_io, Completion, Connection, LimboError, Pager, Result};
@@ -169,27 +169,42 @@ impl<Clock: LogicalClock + 'static, A: ConcurrentAllocator> ProvidesYieldContext
     }
 }
 
-fn current_pos_matches_seek_key(
+fn current_pos_is_only_row_of_seek_key(
     current_row_id: &RowKey,
     seek_key: &SeekKey<'_>,
     mv_cursor_type: &MvccCursorType,
 ) -> Result<bool> {
-    Ok(match (current_row_id, seek_key) {
-        (RowKey::Int(current), SeekKey::TableRowId(target)) => *current == *target,
-        (RowKey::Record(current), SeekKey::IndexKey(target)) => {
-            let MvccCursorType::Index(index_info) = mv_cursor_type else {
-                return Ok(false);
-            };
-            let key_info: Vec<_> = index_info
-                .key_info
-                .iter()
-                .take(target.column_count())
-                .cloned()
-                .collect();
-            compare_immutable(target.get_values()?, current.key.get_values()?, &key_info).is_eq()
+    Ok(match (current_row_id, seek_key, mv_cursor_type) {
+        (RowKey::Int(current), SeekKey::TableRowId(target), MvccCursorType::Table) => {
+            *current == *target
+        }
+        (RowKey::Record(current), SeekKey::IndexKey(target), MvccCursorType::Index(index_info)) => {
+            let target_values = target.get_values()?;
+            index_key_matches_at_most_one_row(&target_values, index_info)
+                && compare_immutable(
+                    target_values,
+                    current.key.get_values()?,
+                    &index_info.key_info[..target.column_count()],
+                )
+                .is_eq()
         }
         _ => false,
     })
+}
+
+fn index_key_matches_at_most_one_row(key: &[ValueRef<'_>], index_info: &IndexInfo) -> bool {
+    // num_cols counts the rowid when the index stores one. So a key this long
+    // ends with the rowid, and two rows never share a rowid. An index without
+    // a rowid (an index method's backing B-tree) stores each whole key once.
+    if key.len() == index_info.num_cols {
+        return true;
+    }
+    // In a UNIQUE index, the indexed columns alone also name one row, unless a
+    // value is NULL: a UNIQUE index can hold any number of rows with NULL there.
+    let indexed_columns = index_info.num_cols - usize::from(index_info.has_rowid);
+    index_info.is_unique
+        && key.len() == indexed_columns
+        && !key.iter().any(|value| matches!(value, ValueRef::Null))
 }
 
 #[cfg(any(test, injected_yields))]
@@ -1580,6 +1595,8 @@ impl<Clock: LogicalClock + 'static, A: ConcurrentAllocator> CursorTrait
         // Skip the seek and short-circuit to SeekResult::Found if the following are true:
         //
         // - the seek is eq_only
+        // - the seek key matches at most one row (a table rowid, the whole index entry, or every
+        //   column of a UNIQUE index with no NULL), so the current row is the first and only match
         // - the cursor is already correctly positioned on a visible version
         //
         // This is because in the situation where the following are true:
@@ -1609,7 +1626,11 @@ impl<Clock: LogicalClock + 'static, A: ConcurrentAllocator> CursorTrait
                 row_id, in_btree, ..
             } = &self.current_pos
             {
-                if current_pos_matches_seek_key(&row_id.row_id, &seek_key, &self.mv_cursor_type)? {
+                if current_pos_is_only_row_of_seek_key(
+                    &row_id.row_id,
+                    &seek_key,
+                    &self.mv_cursor_type,
+                )? {
                     let maybe_index_id = match &self.mv_cursor_type {
                         MvccCursorType::Index(_) => Some(self.table_id),
                         MvccCursorType::Table => None,
@@ -1935,51 +1956,25 @@ impl<Clock: LogicalClock + 'static, A: ConcurrentAllocator> CursorTrait
         };
         // If the cursor is positioned at a btree-resident row, the VDBE may never
         // have materialized the row's record (e.g. UPDATE through a DeferredSeek
-        // never calls Column on the table cursor). Pre-fetch it here so the
-        // later synchronous fetch used to build a tombstone doesn't have to
-        // yield IO from inside this function, which is not IO-reentrant w.r.t.
-        // `delete_from_table_or_index`'s side effects.
-        if in_btree {
-            return_if_io!(self.record());
-        }
-        let was_deleted =
-            self.db
-                .delete_from_table_or_index(self.tx_id, rowid.clone(), maybe_index_id)?;
-        // If was_deleted is false, this can ONLY happen when we have a row that only exists
-        // in the btree but not the mv store. In this case, we create a tombstone for the row
-        // based on the btree row.
-        if !was_deleted {
-            // The cursor can also be positioned on a row that was rolled back
-            // after seek. That row does not exist in either MVCC or the B-tree.
-            if !in_btree {
-                self.invalidate_record();
-                return Ok(IOResult::Done(()));
-            }
-            // The btree cursor must be correctly positioned and cannot cause IO to happen
-            // because we pre-fetched the record above when `in_btree` was true.
-            let IOResult::Done(Some(record)) = self.record()? else {
+        // never calls Column on the table cursor). Pre-fetch it before
+        // `delete_from_table_or_index` so no I/O can interrupt its side effects.
+        let btree_record = if in_btree {
+            let Some(record) = return_if_io!(self.record()) else {
                 crate::bail_corrupt_error!(
                     "Btree cursor should have a record when deleting a row that only exists in the btree"
                 );
             };
-            // All operations below clone values so we can clone it here to circumvent the borrow checker
-            let record = record.clone();
-            let column_count = record.column_count();
-            let row = match &self.mv_cursor_type {
-                MvccCursorType::Table => crate::with_mv_store_allocation_site!(
-                    RowPayload,
-                    Row::new_table_row_in(
-                        rowid.clone(),
-                        record.get_payload(),
-                        column_count,
-                        self.db.allocator(),
-                    )
-                ),
-                MvccCursorType::Index(_) => Ok(Row::new_index_row(rowid.clone(), column_count)),
-            }?;
-            self.db
-                .insert_tombstone_to_table_or_index(self.tx_id, rowid, row, maybe_index_id)?;
-        }
+            // Clone the record so the store call does not borrow the cursor.
+            Some(record.clone())
+        } else {
+            None
+        };
+        self.db.delete_from_table_or_index(
+            self.tx_id,
+            rowid,
+            maybe_index_id,
+            btree_record.as_ref(),
+        )?;
         self.invalidate_record();
         Ok(IOResult::Done(()))
     }
