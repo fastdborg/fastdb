@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "target": "x86_64-unknown-linux-gnu",
-  "inventorySha256": "249db37d6d3929485f74aba898012437b64c1203d1f6f07d39e76485b9b7c633",
+  "inventorySha256": "16ea4d908616a98b131944daf8925e936945e4c9d3567f36d046b93b70f6a2d3",
   "scope": "Checksummed crate archive notice candidates; not complete notices or linked-binary evidence",
   "packages": [
     {
@@ -5543,22 +5543,22 @@
     },
     {
       "name": "turso_core",
-      "version": "0.8.1",
+      "version": "0.8.3",
       "status": "workspace_source_requires_separate_review"
     },
     {
       "name": "turso_ext",
-      "version": "0.8.1",
+      "version": "0.8.3",
       "status": "workspace_source_requires_separate_review"
     },
     {
       "name": "turso_macros",
-      "version": "0.8.1",
+      "version": "0.8.3",
       "status": "workspace_source_requires_separate_review"
     },
     {
       "name": "turso_parser",
-      "version": "0.8.1",
+      "version": "0.8.3",
       "status": "workspace_source_requires_separate_review"
     },
     {
