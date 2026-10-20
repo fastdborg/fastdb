@@ -1,11 +1,14 @@
 # FastDB embedded database
 
-FastDB and FastQL [2.9.0 are released for Linux x64](docs/release-2.9.0.md),
+FastDB and FastQL [2.9.1 are released for Linux x64](docs/release-2.9.1.md),
 with native Rust, Node.js/TypeScript, Python, PHP, Swift, C# and Go clients.
-See the [completed checklist](docs/v2.9.0-tasks.md),
-[verified download](docs/release-2.9.0-download.json),
+See the [completed checklist](docs/v2.9.1-tasks.md),
+[verified download](docs/release-2.9.1-download.json),
 [language contracts](docs/v2.2-language.md) and [engine provenance](UPSTREAM.md).
 
+2.9.1 moves the engine to Turso 0.8.3: MVCC durability fixes, AUTOINCREMENT no
+longer reuses an explicit id 1, and MVCC journal-mode switches inside a transaction
+are refused. Stored data is unchanged.
 2.9.0 lets the Node SDK and CLI use Cloud query version 3: Binary and Vector values
 travel as base64 and requests may be up to 1 MiB. It also keeps keyword column names
 unquoted when a subquery reads a document table.
