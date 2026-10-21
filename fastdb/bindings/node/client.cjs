@@ -175,13 +175,18 @@ class RemoteDatabase {
     let status;
     try {
       if (this.#transport) return await this.#transport(path, body, controller.signal, duration);
-      const response = await this.#fetch(this.#url + path, {
+      const send = () => this.#fetch(this.#url + path, {
         method: body === undefined ? 'GET' : 'POST',
         headers: { authorization: `Bearer ${credential}`, accept: 'application/json', ...(body === undefined ? {} : { 'content-type': 'application/json' }), ...(this.#id === undefined ? {} : { 'x-fastdb-database-id': prepared?.databaseId ?? this.#id }),
           ...(queryVersion === CLOUD_QUERY_VERSION && (path === '/query' || path === '/read') ? { 'x-fastdb-query-version': String(queryVersion) } : {}) },
         ...(body === undefined ? {} : { body }),
         redirect: 'error', signal: controller.signal,
       });
+      let response = await send();
+      if (await queueRefused(response)) {
+        await pause(queueRetryDelay(response), controller.signal);
+        response = await send();
+      }
       status = response.status;
       const replyVersion = response.headers.get('x-fastdb-query-version');
       if ((path === '/query' || path === '/read') && replyVersion !== null && replyVersion !== '2' && replyVersion !== String(queryVersion)) {
@@ -335,6 +340,24 @@ function checkBodySize(body, queryVersion = 2) {
     throw new RangeError(queryVersion === CLOUD_QUERY_VERSION ? 'request exceeds 1 MiB' : 'request exceeds 64 KiB');
 }
 function preparedQueryVersion(prepared) { return prepared.version === 1 ? 2 : prepared.queryVersion; }
+// Cloud refuses a queued request with 503 query_queue_* before dispatching it,
+// so nothing ran and one retry is safe for reads and writes alike.
+async function queueRefused(response) {
+  if (response.status !== 503) return false;
+  try { return /^query_queue_[a-z_]{1,40}$/.test((await response.clone().json())?.code ?? ''); } catch { return false; }
+}
+function queueRetryDelay(response) {
+  const seconds = Number(response.headers.get('retry-after'));
+  return Number.isFinite(seconds) && seconds >= 0 ? Math.min(seconds * 1000, 2000) : 1000;
+}
+function pause(ms, signal) {
+  return new Promise((resolve, reject) => {
+    if (signal.aborted) { reject(signal.reason); return; }
+    const timer = setTimeout(() => { signal.removeEventListener('abort', stop); resolve(); }, ms);
+    const stop = () => { clearTimeout(timer); reject(signal.reason); };
+    signal.addEventListener('abort', stop, { once: true });
+  });
+}
 function httpCode(status) { return status === 401 ? 'FDB_AUTH' : status === 403 ? 'FDB_FORBIDDEN' : status === 409 ? 'FDB_CONFLICT' : status === 429 || status === 413 ? 'FDB_LIMIT' : 'FDB_REMOTE'; }
 function redactMessage(message, token) { return (token ? message.replaceAll(token, '[redacted]') : message).slice(0, 2048); }
 function safeMessage(reply, token) { return redactMessage(typeof reply?.error === 'string' ? reply.error : typeof reply?.error?.message === 'string' ? reply.error.message : 'Database request was rejected', token); }
