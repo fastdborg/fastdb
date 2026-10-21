@@ -1,14 +1,18 @@
-# Dependency security review for 2.9.1
-Reviewed 2026-10-20 for the Linux x64 2.9.1 candidate. The exact lockfile
+# Dependency security review for 2.9.2
+Reviewed 2026-10-21 for the Linux x64 2.9.2 candidate. The exact lockfile
 scan covers 359 package/version identities against the RustSec advisory
-database at `999ec89d5d3f10f20be14750ec8c2d8b44e0ac9b` (fetched just before the
-review; since the 2.9.0 review it adds nine advisories, for ammonia, lopdf,
-negentropy, pest_grammars, zbus_names, zip and zvariant, none of which FastDB
-ships) using the pinned `cargo-audit 0.22.2` binary. It found zero unresolved
-shipping findings; the retained lru informational exception below is unchanged.
-2.9.1 adds no dependency: the lockfile differs from 2.9.0 only in the nine FastDB
-workspace package versions and the Turso 0.8.3 workspace crate versions. 2.6.0
-to 2.9.0 had the same result.
+database at `e6f94f3760d5e6c54c1b05f204002263bc025524` (1,348 advisories,
+fetched just before the review; since the 2.9.1 review it adds ten advisories,
+for basic-toml, rustls-webpki, wasmtime, wasmtime-wasi-http, webpki-root-certs
+and webpki-roots) using the pinned `cargo-audit 0.22.2` binary. The first scan
+found RUSTSEC-2026-0382 in the shipped `rustls-webpki` 0.103.15 (certificate
+verification may accept distrusted emSign intermediates); 2.9.2 updates it to the
+patched 0.103.16. The final scan found zero unresolved shipping findings; the
+retained lru informational exception below is unchanged. Apart from that update,
+the lockfile differs from 2.9.1 only in the nine FastDB workspace package versions.
+
+The 2.9.1 review (database `999ec89d5d3f10f20be14750ec8c2d8b44e0ac9b`) found zero
+unresolved shipping findings; 2.6.0 to 2.9.1 had the same result.
 
 The 2.5.4 review used the same database. That database added four rustls
 0.23.45 advisories (RUSTSEC-2026-0346,
