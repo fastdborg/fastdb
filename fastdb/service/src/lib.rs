@@ -499,6 +499,24 @@ impl DatabaseService {
     pub fn begin_shutdown(&self) {
         self.admission.stop();
     }
+
+    pub fn checkpoint_for_shutdown(&self) -> Result<()> {
+        if self.fenced.load(Ordering::SeqCst) {
+            return Ok(());
+        }
+        let deadline = Instant::now() + SHUTDOWN_CHECKPOINT_WAIT;
+        let _schema = self.lock_before(deadline, || self.schema.try_write())?;
+        let _publication = self.lock_before(deadline, || self.publication.try_lock())?;
+        let connection = self.database.connect()?;
+        let result = connection.execute("PRAGMA wal_checkpoint(TRUNCATE)", &Parameters::new())?;
+        if result.rows.first().and_then(|row| row.first()) != Some(&fastdb::Value::Integer(0)) {
+            return Err(Error::new(
+                "FDB_BUSY",
+                "shutdown checkpoint did not complete; the log is replayed on the next open",
+            ));
+        }
+        Ok(())
+    }
 }
 
 struct Scope {
@@ -539,9 +557,13 @@ impl Scope {
 }
 impl Drop for Scope {
     fn drop(&mut self) {
-        let _ = self.rollback();
+        if let Err(error) = self.rollback() {
+            eprintln!("fastdb-service: {}: {}", error.code, error.message);
+        }
     }
 }
+
+const SHUTDOWN_CHECKPOINT_WAIT: Duration = Duration::from_secs(30);
 
 fn deadline() -> Instant {
     Instant::now() + Duration::from_secs(15)
@@ -679,6 +701,65 @@ mod tests {
         assert!(reply["error"].is_null(), "{reply}");
         schema.join().unwrap();
         assert_eq!(service.info().unwrap()["sequence"], 3);
+    }
+
+    fn log_bytes(path: &Path) -> u64 {
+        std::fs::metadata(path.with_extension("db-log"))
+            .map(|metadata| metadata.len())
+            .unwrap_or(0)
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_clean_stop_checkpoints_the_log_into_the_database_file() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("app.fastdb");
+        let service = Arc::new(DatabaseService::create(&path).unwrap());
+        let body = json!({"requestId":"write","afterSequence":0,"statements":[{"sql":"CREATE TABLE docs;"},{"sql":"INSERT INTO docs {id:docs:p1,n:1}"}]}).to_string();
+        let reply: Value = serde_json::from_str(&service.query(&body).unwrap()).unwrap();
+        assert!(reply["error"].is_null(), "{reply}");
+        assert!(
+            log_bytes(&path) > 0,
+            "the write should be in the MVCC log before stop"
+        );
+        let authorization =
+            crate::http::Token::load_or_create(&directory.path().join("token")).unwrap();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        tokio::time::timeout(
+            Duration::from_secs(5),
+            crate::http::serve(listener, service.clone(), authorization, async {}),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        assert_eq!(
+            log_bytes(&path),
+            0,
+            "a clean stop must leave nothing to replay"
+        );
+        drop(service);
+        let service = DatabaseService::open(&path).unwrap();
+        assert_eq!(service.info().unwrap()["sequence"], 1);
+        let mut read: Value = serde_json::from_str(&json!({"requestId":"read","afterSequence":0,"statements":[{"sql":"SELECT n FROM docs"}]}).to_string()).unwrap();
+        read["readVersion"] = json!(2);
+        let rows: Value = serde_json::from_str(&service.read(&read.to_string()).unwrap()).unwrap();
+        assert!(rows.to_string().contains("1"), "{rows}");
+    }
+
+    #[test]
+    fn a_fenced_service_skips_the_shutdown_checkpoint() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("app.fastdb");
+        let service = DatabaseService::create(&path).unwrap();
+        let body = json!({"requestId":"write","afterSequence":0,"statements":[{"sql":"CREATE TABLE docs;"}]}).to_string();
+        service.query(&body).unwrap();
+        let before = log_bytes(&path);
+        service.fence();
+        service.checkpoint_for_shutdown().unwrap();
+        assert_eq!(
+            log_bytes(&path),
+            before,
+            "an uncertain service must not be checkpointed"
+        );
     }
 
     #[cfg(unix)]
