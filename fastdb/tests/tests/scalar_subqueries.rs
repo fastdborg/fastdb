@@ -4681,3 +4681,53 @@ fn source_free_named_windows_bind_outer_fields() {
         }
     }
 }
+
+#[test]
+fn relational_outer_columns_keep_plain_names_beside_collection_subqueries() {
+    let db = Database::open(":memory:").unwrap();
+    let c = db.connect().unwrap();
+    q(
+        &c,
+        "CREATE TABLE organizations (id TEXT PRIMARY KEY, plan TEXT, status TEXT)",
+    );
+    q(
+        &c,
+        "INSERT INTO organizations VALUES ('o1','trial','active')",
+    );
+    q(&c, "CREATE TABLE settings");
+    q(
+        &c,
+        "INSERT INTO settings {id:settings:s1,startedAt:1,endsAt:50}",
+    );
+    let mut parameters = Parameters::new();
+    parameters.insert("$org".into(), Value::String("o1".into()));
+    parameters.insert("$key".into(), Value::String("s1".into()));
+    parameters.insert("$now".into(), Value::Integer(10));
+    for (sql, columns) in [
+        (
+            "SELECT plan FROM organizations WHERE id=$org AND EXISTS (SELECT 1 FROM settings WHERE id=type::record('settings',$key) AND startedAt<=$now AND endsAt>$now)",
+            vec!["plan"],
+        ),
+        (
+            "SELECT plan FROM organizations WHERE id=$org AND EXISTS (SELECT 1 FROM organizations o WHERE o.id=$org AND EXISTS (SELECT 1 FROM settings WHERE id=type::record('settings',$key) AND endsAt>$now))",
+            vec!["plan"],
+        ),
+        (
+            "SELECT plan, status FROM organizations WHERE (SELECT endsAt FROM settings WHERE id=type::record('settings',$key)) > $now",
+            vec!["plan", "status"],
+        ),
+        (
+            "SELECT plan FROM organizations WHERE id IN (SELECT $org FROM settings)",
+            vec!["plan"],
+        ),
+    ] {
+        let used: Parameters = parameters
+            .iter()
+            .filter(|(name, _)| sql.contains(name.as_str()))
+            .map(|(name, value)| (name.clone(), value.clone()))
+            .collect();
+        let result = c.execute(sql, &used).expect(sql);
+        assert_eq!(result.columns, columns, "{sql}");
+        assert_eq!(result.rows.len(), 1, "{sql}");
+    }
+}

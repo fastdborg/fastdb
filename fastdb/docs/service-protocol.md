@@ -106,6 +106,15 @@ before sending. `submit(request, options)` and `recover(request, options)` send
 the exact saved body to the exact database URL. `writeAtomic` is the convenience
 prepare-and-submit form and includes that request in every uncertain error.
 `close()` stops new requests and cancels outstanding transport work.
+When FastDB Cloud refuses a request with `503` and a `query_queue_*` code, the
+request was never dispatched. The client waits for `retry-after` (at most 2 s,
+within the request timeout) and sends it once more; any other `503` is returned.
+
+When the local service process stops cleanly, it finishes admitted requests and then
+checkpoints its MVCC log into the database file, so the next open has nothing to
+replay. A fenced service skips that checkpoint and keeps the log for recovery. While
+the service runs, the engine checkpoints automatically when the log passes about
+4 MB, so the log does not grow without bound between restarts.
 
 Each statement has SQL and an optional typed `params` map. Accept 1–32 statements.
 Each SQL field contains one statement; the backend validates it with the FastQL

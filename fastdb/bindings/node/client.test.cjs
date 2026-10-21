@@ -549,3 +549,30 @@ test('base64 byte values must be canonical', () => {
   assert.deepEqual(encodeValue(Buffer.from([1, 2]), 0, true), { type: 'Binary', value: 'AQI=' });
   assert.deepEqual(encodeValue(Buffer.from([1, 2])), { type: 'Binary', value: [1, 2] });
 });
+
+test('a Cloud queue refusal is retried once; other 503 responses are not', async () => {
+  const queueRefusal = () => new Response(JSON.stringify({ error: 'Query queue unavailable', code: 'query_queue_timeout' }), { status: 503, headers: { 'content-type': 'application/json', 'retry-after': '0' } });
+  for (const [label, refusals, expected] of [['one refusal', 1, 2], ['two refusals', 2, 2]]) {
+    let posts = 0;
+    const db = await connect({ url: 'http://localhost:4321', token: 'test', fetch: async (_url, options) => {
+      if (options.method === 'GET') return json(details(0));
+      posts++;
+      if (posts <= refusals) return queueRefusal();
+      const request = JSON.parse(options.body);
+      return json({ requestId: request.requestId, sequence: 0, readVersion: 2, results: [result()] });
+    } });
+    if (refusals === 1) await db.read([{ sql: 'SELECT 1' }]);
+    else await assert.rejects(db.read([{ sql: 'SELECT 1' }]), error => error.status === 503, label);
+    assert.equal(posts, expected, label);
+    await db.close();
+  }
+  let posts = 0;
+  const db = await connect({ url: 'http://localhost:4321', token: 'test', fetch: async (_url, options) => {
+    if (options.method === 'GET') return json(details(0));
+    posts++;
+    return json({ error: 'Request not acknowledged' }, 503);
+  } });
+  await assert.rejects(db.read([{ sql: 'SELECT 1' }]), error => error.status === 503);
+  assert.equal(posts, 1, 'an ordinary 503 is not retried');
+  await db.close();
+});

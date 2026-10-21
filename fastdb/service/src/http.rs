@@ -167,6 +167,9 @@ pub async fn serve(
         .acquire_many(MAX_DATABASE_JOBS)
         .await
         .map_err(|_| Error::new("FDB_STORAGE", "database job tracking closed"))?;
+    if let Err(error) = database.checkpoint_for_shutdown() {
+        eprintln!("fastdb-service: {}: {}", error.code, error.message);
+    }
     outcome
 }
 

@@ -1,9 +1,13 @@
 # FastDB implementation status
 
-FastDB and FastQL **2.2.0 are released for Linux x64**. See the
-[release record](release-2.2.0.md), [public download receipt](release-2.2.0-download.json),
-[completed release checklist](v2.2-tasks.md) and [engine provenance](../UPSTREAM.md).
-Cloud v0.2.0 remains separate; it was not changed or deployed by this release.
+FastDB and FastQL **2.9.1 are the current release for Linux x64**, on the Turso
+0.8.3 engine. See the [release record](release-2.9.1.md), the
+[release checklist](v2.9.1-tasks.md), the [sync notes](turso-0.8.3.md) and
+[engine provenance](../UPSTREAM.md). FastDB Cloud runs the same engine but is a
+separate private project.
+
+The text below records the 2.2.0 state and is kept as history. Later releases
+are listed in the `release-2.*.md` records.
 
 Release clients are Rust, Node.js/TypeScript, Python, PHP, Swift, C# and Go.
 Browser/WASM is removed. macOS, Windows, ARM and Apple mobile are outside V2.

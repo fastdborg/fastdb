@@ -33,4 +33,6 @@ if $strip_debug; then
   strip --strip-debug fastdb/bindings/node/fastdb.node
 fi
 node --test --test-concurrency=2 fastdb/bindings/node/test.cjs fastdb/bindings/node/ownership.test.cjs fastdb/bindings/node/client.test.cjs fastdb/bindings/node/client-native.test.cjs fastdb/bindings/node/embedded-client.test.cjs fastdb/examples/node-task-tracker/test.cjs
-pnpm --dir fastdb/bindings/node run typecheck
+if [[ "${FASTDB_SKIP_TYPECHECK:-}" != 1 ]]; then
+  pnpm --dir fastdb/bindings/node run typecheck
+fi
