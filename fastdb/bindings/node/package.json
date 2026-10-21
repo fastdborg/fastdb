@@ -1,6 +1,6 @@
 {
   "name": "@fastdb/node",
-  "version": "2.9.1",
+  "version": "2.9.2",
   "private": true,
   "main": "index.cjs",
   "types": "index.d.ts",
