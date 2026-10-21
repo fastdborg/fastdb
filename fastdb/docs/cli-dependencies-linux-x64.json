@@ -7,7 +7,7 @@
     "build"
   ],
   "scope": "Cargo dependency declarations; includes build tools, excludes dev dependencies; not proof of linked code or complete notices",
-  "lockfileSha256": "aecac3d19392e983f70d9b44d98f85880921786a0c1ec9bb91976a1fdabd618b",
+  "lockfileSha256": "de51c5e96d6bd41bcc266ff0e3ff88ab2e20906ec8669192c4d8278ae6bd76fd",
   "packages": [
     {
       "name": "aead",
@@ -1126,7 +1126,7 @@
     },
     {
       "name": "rustls-webpki",
-      "version": "0.103.15",
+      "version": "0.103.16",
       "licenseExpression": "ISC"
     },
     {

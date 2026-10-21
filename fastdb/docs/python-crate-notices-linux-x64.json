@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "target": "x86_64-unknown-linux-gnu",
-  "inventorySha256": "a32c69be4ba71a2c501b482d23f4e5526296bf68fb760680987d2212bb702b0a",
+  "inventorySha256": "c34bb179038320a970a0a2af60e31e6fa6796953591df9c5836e0738d7746cc3",
   "scope": "Checksummed crate archive notice candidates; not complete notices or linked-binary evidence",
   "packages": [
     {

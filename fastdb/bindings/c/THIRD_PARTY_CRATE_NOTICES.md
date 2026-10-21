@@ -4,7 +4,7 @@ Generated from the pinned Cargo dependency inventory and checksummed source arch
 
 This is a partial notice collection. It supplements LICENSE.md and THIRD_PARTY_NOTICES.md. Inline attributions, unconventional filenames and other bundled components require further review before a complete distribution-notice claim.
 
-Target: `x86_64-unknown-linux-gnu`. Cargo.lock SHA-256: `aecac3d19392e983f70d9b44d98f85880921786a0c1ec9bb91976a1fdabd618b`.
+Target: `x86_64-unknown-linux-gnu`. Cargo.lock SHA-256: `de51c5e96d6bd41bcc266ff0e3ff88ab2e20906ec8669192c4d8278ae6bd76fd`.
 
 ## Packages without collected archive or supplemental texts
 

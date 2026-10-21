@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "target": "x86_64-unknown-linux-gnu",
-  "inventorySha256": "a6a71080f96d7efac833fc2d1cd5e3f731f48f0d067393ea99789752d4e4f2ad",
+  "inventorySha256": "ec4716f6b410d004d0c3e4cab9216535456d1ae4316ab3eaf35e998d93d126e3",
   "scope": "Checksummed crate archive notice candidates; not complete notices or linked-binary evidence",
   "packages": [
     {
@@ -4481,9 +4481,9 @@
     },
     {
       "name": "rustls-webpki",
-      "version": "0.103.15",
+      "version": "0.103.16",
       "status": "archive_verified",
-      "archiveSha256": "f3c3cf1d8b1e7d4927e2d154c3fcb02979afb9939629c62cd9048d4f07b60ac2",
+      "archiveSha256": "4443b1b6d39d7c663139942cc4558262562d2c84123bb6282ef177009ca8b281",
       "declaredLicenseFile": null,
       "noticeCandidates": [
         {

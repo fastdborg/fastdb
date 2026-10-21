@@ -4,7 +4,7 @@ Generated from the pinned Cargo dependency inventory and checksummed source arch
 
 This is a partial notice collection. It supplements LICENSE.md and THIRD_PARTY_NOTICES.md. Inline attributions, unconventional filenames and other bundled components require further review before a complete distribution-notice claim.
 
-Target: `x86_64-unknown-linux-gnu`. Cargo.lock SHA-256: `aecac3d19392e983f70d9b44d98f85880921786a0c1ec9bb91976a1fdabd618b`.
+Target: `x86_64-unknown-linux-gnu`. Cargo.lock SHA-256: `de51c5e96d6bd41bcc266ff0e3ff88ab2e20906ec8669192c4d8278ae6bd76fd`.
 
 ## Packages without collected archive or supplemental texts
 
@@ -859,7 +859,7 @@ Target: `x86_64-unknown-linux-gnu`. Cargo.lock SHA-256: `aecac3d19392e983f70d9b4
 - `LICENSE-APACHE`: [source text c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4](#text-c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4)
 - `LICENSE-MIT`: [source text 1c7cf76689c837a68ed8d704994e52a0f2940c087958f860d17f3186afbdcc0c](#text-1c7cf76689c837a68ed8d704994e52a0f2940c087958f860d17f3186afbdcc0c)
 
-### rustls-webpki 0.103.15
+### rustls-webpki 0.103.16
 - `LICENSE`: [source text 5b698ca13897be3afdb7174256fa1574f8c6892b8bea1a66dd6469d3fe27885a](#text-5b698ca13897be3afdb7174256fa1574f8c6892b8bea1a66dd6469d3fe27885a)
 
 ### rustls 0.23.46
