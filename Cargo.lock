@@ -2187,7 +2187,7 @@ dependencies = [
 
 [[package]]
 name = "fastdb"
-version = "2.9.1"
+version = "2.9.2"
 dependencies = [
  "fastql-parser",
  "h3o",
@@ -2207,7 +2207,7 @@ dependencies = [
 
 [[package]]
 name = "fastdb-c"
-version = "2.9.1"
+version = "2.9.2"
 dependencies = [
  "fastdb",
  "fastdb-protocol",
@@ -2216,7 +2216,7 @@ dependencies = [
 
 [[package]]
 name = "fastdb-cli"
-version = "2.9.1"
+version = "2.9.2"
 dependencies = [
  "fastdb",
  "fastdb-service",
@@ -2235,7 +2235,7 @@ dependencies = [
 
 [[package]]
 name = "fastdb-node"
-version = "2.9.1"
+version = "2.9.2"
 dependencies = [
  "fastdb",
  "napi",
@@ -2246,7 +2246,7 @@ dependencies = [
 
 [[package]]
 name = "fastdb-protocol"
-version = "2.9.1"
+version = "2.9.2"
 dependencies = [
  "fastdb",
  "serde",
@@ -2255,7 +2255,7 @@ dependencies = [
 
 [[package]]
 name = "fastdb-python"
-version = "2.9.1"
+version = "2.9.2"
 dependencies = [
  "fastdb",
  "fastdb-protocol",
@@ -2265,7 +2265,7 @@ dependencies = [
 
 [[package]]
 name = "fastdb-service"
-version = "2.9.1"
+version = "2.9.2"
 dependencies = [
  "bytes",
  "fastdb",
@@ -2285,7 +2285,7 @@ dependencies = [
 
 [[package]]
 name = "fastdb-tests"
-version = "2.9.1"
+version = "2.9.2"
 dependencies = [
  "fastdb",
  "fastql-parser",
@@ -2301,7 +2301,7 @@ checksum = "9afc2bd4d5a73106dd53d10d73d3401c2f32730ba2c0b93ddb888a8983680471"
 
 [[package]]
 name = "fastql-parser"
-version = "2.9.1"
+version = "2.9.2"
 dependencies = [
  "serde",
  "thiserror 2.0.16",
@@ -5876,9 +5876,9 @@ checksum = "f87165f0995f63a9fbeea62b64d10b4d9d8e78ec6d7d51fb2125fda7bb36788f"
 
 [[package]]
 name = "rustls-webpki"
-version = "0.103.15"
+version = "0.103.16"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f3c3cf1d8b1e7d4927e2d154c3fcb02979afb9939629c62cd9048d4f07b60ac2"
+checksum = "4443b1b6d39d7c663139942cc4558262562d2c84123bb6282ef177009ca8b281"
 dependencies = [
  "aws-lc-rs",
  "ring",

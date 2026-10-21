@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "target": "x86_64-unknown-linux-gnu",
-  "inventorySha256": "f9866140ccb6850e52d9feccabc475474a19542b9660f80c279837daba507e67",
+  "inventorySha256": "c34bb179038320a970a0a2af60e31e6fa6796953591df9c5836e0738d7746cc3",
   "scope": "Checksummed crate archive notice candidates; not complete notices or linked-binary evidence",
   "packages": [
     {
@@ -1624,17 +1624,17 @@
     },
     {
       "name": "fastdb-protocol",
-      "version": "2.9.1",
+      "version": "2.9.2",
       "status": "workspace_source_requires_separate_review"
     },
     {
       "name": "fastdb-python",
-      "version": "2.9.1",
+      "version": "2.9.2",
       "status": "workspace_source_requires_separate_review"
     },
     {
       "name": "fastdb",
-      "version": "2.9.1",
+      "version": "2.9.2",
       "status": "workspace_source_requires_separate_review"
     },
     {
@@ -1653,7 +1653,7 @@
     },
     {
       "name": "fastql-parser",
-      "version": "2.9.1",
+      "version": "2.9.2",
       "status": "workspace_source_requires_separate_review"
     },
     {

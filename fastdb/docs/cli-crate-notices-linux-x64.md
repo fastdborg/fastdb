@@ -4,7 +4,7 @@ Generated from the pinned Cargo dependency inventory and checksummed source arch
 
 This is a partial notice collection. It supplements LICENSE.md and THIRD_PARTY_NOTICES.md. Inline attributions, unconventional filenames and other bundled components require further review before a complete distribution-notice claim.
 
-Target: `x86_64-unknown-linux-gnu`. Cargo.lock SHA-256: `e739228fb40a35cf85818456aa4d98b2067f6e760f6f767e57800886b6fec2b1`.
+Target: `x86_64-unknown-linux-gnu`. Cargo.lock SHA-256: `de51c5e96d6bd41bcc266ff0e3ff88ab2e20906ec8669192c4d8278ae6bd76fd`.
 
 ## Packages without collected archive or supplemental texts
 
@@ -272,19 +272,19 @@ Target: `x86_64-unknown-linux-gnu`. Cargo.lock SHA-256: `e739228fb40a35cf8581845
 - `LICENSE-APACHE`: [source text 7cde763ba32b3ec2a84eddd8beb0dcb895fd6436aeb18491ab9572a7eb8de996](#text-7cde763ba32b3ec2a84eddd8beb0dcb895fd6436aeb18491ab9572a7eb8de996)
 - `LICENSE-MIT`: [source text 7c86aec715e38bf01c316a69de917c1245bf9945a5dc0329eecc774cdb4f26c2](#text-7c86aec715e38bf01c316a69de917c1245bf9945a5dc0329eecc774cdb4f26c2)
 
-### fastdb-cli 2.9.1
+### fastdb-cli 2.9.2
 - Workspace `LICENSE.md`: [source text b646f9ee8bcaf87e8de75153b9df7a2861c7ac445c87e741768b3c2bccf47bc5](#text-b646f9ee8bcaf87e8de75153b9df7a2861c7ac445c87e741768b3c2bccf47bc5)
 
-### fastdb-service 2.9.1
+### fastdb-service 2.9.2
 - Workspace `LICENSE.md`: [source text b646f9ee8bcaf87e8de75153b9df7a2861c7ac445c87e741768b3c2bccf47bc5](#text-b646f9ee8bcaf87e8de75153b9df7a2861c7ac445c87e741768b3c2bccf47bc5)
 
-### fastdb 2.9.1
+### fastdb 2.9.2
 - Workspace `LICENSE.md`: [source text b646f9ee8bcaf87e8de75153b9df7a2861c7ac445c87e741768b3c2bccf47bc5](#text-b646f9ee8bcaf87e8de75153b9df7a2861c7ac445c87e741768b3c2bccf47bc5)
 
 ### fastdivide 0.4.2
 - `LICENSE.txt`: [source text 97b68427822e3bca727ea8bc8748b354509b36bc2311c34b39ce86773fcb65c9](#text-97b68427822e3bca727ea8bc8748b354509b36bc2311c34b39ce86773fcb65c9)
 
-### fastql-parser 2.9.1
+### fastql-parser 2.9.2
 - Workspace `LICENSE.md`: [source text b646f9ee8bcaf87e8de75153b9df7a2861c7ac445c87e741768b3c2bccf47bc5](#text-b646f9ee8bcaf87e8de75153b9df7a2861c7ac445c87e741768b3c2bccf47bc5)
 
 ### fastrand 2.3.0
@@ -859,7 +859,7 @@ Target: `x86_64-unknown-linux-gnu`. Cargo.lock SHA-256: `e739228fb40a35cf8581845
 - `LICENSE-APACHE`: [source text c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4](#text-c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4)
 - `LICENSE-MIT`: [source text 1c7cf76689c837a68ed8d704994e52a0f2940c087958f860d17f3186afbdcc0c](#text-1c7cf76689c837a68ed8d704994e52a0f2940c087958f860d17f3186afbdcc0c)
 
-### rustls-webpki 0.103.15
+### rustls-webpki 0.103.16
 - `LICENSE`: [source text 5b698ca13897be3afdb7174256fa1574f8c6892b8bea1a66dd6469d3fe27885a](#text-5b698ca13897be3afdb7174256fa1574f8c6892b8bea1a66dd6469d3fe27885a)
 
 ### rustls 0.23.46
